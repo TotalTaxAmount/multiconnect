@@ -8,5 +8,10 @@ pkgs.stdenv.mkDerivation {
   buildInputs = with pkgs; [
     rustup
     cargo
+    cargo-tauri
+    nodejs_22
+    pkg-config
+    libsoup
+    webkitgtk
   ];
 }
