@@ -7,10 +7,7 @@ async fn main() {
     std::env::set_var("LOGLEVEL", "info");
   }
 
-  pretty_env_logger::formatted_timed_builder()
-    .parse_env("LOGLEVEL")
-    .format_timestamp_secs()
-    .init();
+  pretty_env_logger::formatted_timed_builder().parse_env("LOGLEVEL").format_timestamp_secs().init();
 
   multiconnect_lib::run().await;
 }

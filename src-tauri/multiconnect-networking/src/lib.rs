@@ -1,17 +1,20 @@
+use core::error;
 use std::{error::Error, sync::Arc};
 
-use libp2p::{futures::StreamExt, mdns, noise, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Swarm, SwarmBuilder};
-use log::{debug, info};
-use tokio::sync::Mutex;
+use libp2p::{
+  futures::{lock, StreamExt}, mdns, noise, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, Swarm, SwarmBuilder
+};
+use log::{debug, error, info};
+use tokio::{select, sync::Mutex};
 use tracing_subscriber::EnvFilter;
 
 #[derive(NetworkBehaviour)]
-struct Behavior {
-  mnds: mdns::tokio::Behaviour
+struct MulticonnectBehavior {
+  mnds: mdns::tokio::Behaviour,
 }
 
 pub struct NetworkManager {
-  swarm: Arc<Mutex<Swarm<Behavior>>>
+  swarm: Arc<Mutex<Swarm<MulticonnectBehavior>>>,
 }
 
 impl NetworkManager {
@@ -19,33 +22,49 @@ impl NetworkManager {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
     debug!("Initializing new swarm");
-    let mut swarm = Arc::new(Mutex::new(SwarmBuilder::with_new_identity()
-      .with_tokio()
-      .with_tcp(
-        tcp::Config::default(),
-        noise::Config::new,
-        yamux::Config::default
-      )?
-      .with_behaviour(|key| {
-        Ok(Behavior {
-          mnds: mdns::tokio::Behaviour::new(
-            mdns::Config::default(), 
-            key.public().to_peer_id()
-          )?,
-        })
-      })?
-      .build()));
+    let swarm = Arc::new(Mutex::new(
+      SwarmBuilder::with_new_identity()
+        .with_tokio()
+        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
+        .with_quic()
+        .with_behaviour(|key| {
+          Ok(MulticonnectBehavior { mnds: mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())? })
+        })?
+        .build(),
+    ));
 
-    
     let clone = swarm.clone();
-    clone.lock().await.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    let mut bound = false;
+    for port in 1590..=1600 {
+      let addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", port).parse()?;
+      let mut locked = clone.lock().await;
+      if locked.listen_on(addr.clone()).is_ok() {
+        info!("Listening on {:?}", addr);
+        bound = true;
+        break;
+      }
+    }
+
+    if !bound {
+      error!("Failed to bind to any port in the range 1590-1600");
+      return Err("Failed to bind to any port in the range 1590-1600".into());
+    }
+
     tokio::spawn(async move {
+      let mut locked = clone.lock().await;
       loop {
-        match clone.lock().await.select_next_some().await {
-          SwarmEvent::NewListenAddr { address, ..} => {
-            info!("Listening in {:?}", address);
+        select! {
+          event = locked.select_next_some() => match event {
+            SwarmEvent::NewListenAddr { address, ..} => {
+              info!("Muliconnect listing on {:?}", address);
+            }
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
+              for (peer_id, multiaddr) in discoverd {
+                info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+              }
+            }
+            _ => {}
           }
-          _ => {}
         }
       }
     });
