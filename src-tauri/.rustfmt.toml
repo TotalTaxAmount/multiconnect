@@ -1,0 +1,11 @@
+hard_tabs = false
+tab_spaces = 2
+
+max_width = 120
+fn_call_width = 120
+struct_lit_width = 120
+chain_width = 120
+control_brace_style = "AlwaysSameLine"
+wrap_comments = true
+match_arm_blocks = false
+array_width = 120

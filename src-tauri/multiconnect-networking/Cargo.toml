@@ -1,0 +1,14 @@
+[package]
+name = "multiconnect-networking"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+name = "multiconnect_networking"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+libp2p = { version = "0.52.4", features = ["tcp", "ping", "serde", "mdns", "noise", "yamux", "dns", "tokio", "macros"] }
+    tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+log = "0.4.24"
