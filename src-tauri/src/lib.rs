@@ -1,18 +1,29 @@
-use multiconnect_networking::NetworkManager;
+use std::{error::Error, sync::Arc};
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-  format!("Hello, {}! You've been greeted from Rust!", name)
-}
+use multiconnect_networking::{peer::Peer, NetworkManager};
+use tauri::State;
+use tokio::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {
-  let network_manager = NetworkManager::new().await;
+  if std::env::var("LOGLEVEL").is_err() {
+    std::env::set_var("LOGLEVEL", "info");
+  }
+
+  pretty_env_logger::formatted_timed_builder().parse_env("LOGLEVEL").format_timestamp_secs().init();
+
+  let network_manager: Arc<Mutex<NetworkManager>> = NetworkManager::new().await.unwrap();
 
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![greet])
+    .manage(network_manager)
+    .invoke_handler(tauri::generate_handler![list_peers])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
+}
+
+#[tauri::command]
+async fn list_peers(network_manager: State<'_, Arc<Mutex<NetworkManager>>>) -> Result<Vec<Peer>, ()> {
+  let manager = network_manager.lock().await;
+  Ok(manager.list_peers().await)
 }

@@ -3201,6 +3201,8 @@ version = "0.0.1"
 dependencies = [
  "libp2p",
  "log",
+ "serde",
+ "tauri",
  "tokio",
  "tracing-subscriber",
 ]

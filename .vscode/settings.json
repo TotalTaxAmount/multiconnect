@@ -3,6 +3,7 @@
     "Behaviour",
     "mdns",
     "mnds",
+    "Multiaddr",
     "multiconnect",
     "tauri"
   ]

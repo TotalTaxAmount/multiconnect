@@ -8,7 +8,9 @@ name = "multiconnect_networking"
 path = "src/lib.rs"
 
 [dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 libp2p = { version = "0.52.4", features = ["tcp", "quic", "ping", "serde", "mdns", "noise", "yamux", "dns", "tokio", "macros"] }
-    tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4.24"
