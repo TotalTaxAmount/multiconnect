@@ -1,39 +1,50 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
 
   type Peer = { peer_id: string; multiaddr: string };
   let peers: Peer[] = [];
+  let loading = true;
 
   function listPeers() {
     invoke<Peer[]>('list_peers')
-    .then((res: Peer[]) => {
-      peers = res;
-    })
-    .catch((e) => {
-      console.error("Failed to fetch peers: ", e);
-    });
+      .then((res: Peer[]) => {
+        peers = res;
+        if (peers.length > 0) {
+          loading = false;
+        }
+      })
+      .catch((e) => {
+        console.error("Failed to fetch peers: ", e);
+      });
   }
 
   onMount(() => {
     listPeers();
-  })
+    const interval = setInterval(() => {
+      listPeers();
+    }, 3000);
+
+    onDestroy(() => {
+      clearInterval(interval);
+    });
+  });
 </script>
 
 <main class="container">
   <h1 class="title">Peer List</h1>
-  <button on:click={listPeers}>List Peers</button>
-
   <ul class="peer-list">
-    {#if peers.length > 0}
+    {#if loading}
+      <li class="spinner-container">
+        <div class="spinner"></div>
+      </li>
+    {:else}
       {#each peers as peer}
         <li>
           <strong>Peer ID:</strong> {peer.peer_id} <br />
           <strong>Multiaddr:</strong> {peer.multiaddr}
         </li>
       {/each}
-    {:else}
-      <li>No peers found.</li>
     {/if}
   </ul>
 </main>
@@ -63,8 +74,33 @@
 
   .peer-list li {
     margin-bottom: 10px;
-    background: #f3f3f3;
+    background: #9f9999;
     padding: 10px;
     border-radius: 5px;
+  }
+
+  .spinner-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100px;
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 5px solid #ddd;
+    border-top: 5px solid #333;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

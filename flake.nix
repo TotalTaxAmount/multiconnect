@@ -80,7 +80,12 @@
       ANDROID_SDK_ROOT = "${androidComposition.androidsdk}/libexec/android-sdk";
       ANDROID_NDK_ROOT = "${androidComposition.androidsdk}/libexec/android-sdk/ndk-bundle";
       JAVA_HOME = "${pkgs.jdk21.home}";
+
       GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidComposition.androidsdk}/libexec/android-sdk/build-tools/${buildToolsVersion}/aapt2"; # Fix `APT2 aapt2-8.5.1-11315950-linux Daemon #0: Daemon startup failed`
+
+      WEBKIT_DISABLE_COMPOSITING_MODE = 1; # Fix `Failed to get GBM device`
+
+      GDK_BACKEND = "x11"; # https://github.com/tauri-apps/tauri/issues/12361
     };
   });
 }

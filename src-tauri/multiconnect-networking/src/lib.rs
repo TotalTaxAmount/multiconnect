@@ -18,6 +18,19 @@ struct MulticonnectBehavior {
   mnds: mdns::tokio::Behaviour,
 }
 
+impl MulticonnectBehavior {
+  pub fn new(key: &libp2p::identity::Keypair) -> Result<Self, Box<dyn Error>> {
+    let mnds_cfg = mdns::Config {
+      query_interval: std::time::Duration::from_secs(2),
+      ..Default::default()
+    };
+
+    Ok(Self { 
+      mnds: mdns::tokio::Behaviour::new(mnds_cfg, key.public().to_peer_id())? 
+    })
+  }
+}
+
 pub struct NetworkManager {
   swarm: Arc<Mutex<Swarm<MulticonnectBehavior>>>,
   peers: Arc<Mutex<Vec<Peer>>>,
@@ -29,16 +42,13 @@ impl NetworkManager {
 
     let peers = Arc::new(Mutex::new(Vec::new()));
     debug!("Initializing new swarm");
+    
     let swarm = Arc::new(Mutex::new(
       SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_quic()
-        .with_behaviour(|key| {
-          Ok(MulticonnectBehavior {
-            mnds: mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?,
-          })
-        })?
+        .with_behaviour(|key| MulticonnectBehavior::new(key).unwrap())?
         .build(),
     ));
 
