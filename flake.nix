@@ -54,16 +54,16 @@
         
       # Android
       android-studio
-      androidComposition.androidsdk
-      androidComposition.ndk-bundle
-      vulkan-headers 
-      vulkan-loader
-      vulkan-tools
-      libsForQt5.qt5.qtwayland
-      wayland
-      libGL
-      jdk21
-      lsb-release
+      # androidComposition.androidsdk
+      # androidComposition.ndk-bundle
+      # vulkan-headers 
+      # vulkan-loader
+      # vulkan-tools
+      # libsForQt5.qt5.qtwayland
+      # wayland
+      # libGL
+      # jdk21
+      # lsb-release
     ];
   in
   { 
