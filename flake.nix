@@ -12,7 +12,6 @@
       system = system;
       config.allowUnfree = true;
     };
-    };
 
     buildInputs = with pkgs; [
       rustup
@@ -41,7 +40,6 @@
       nativeBuildInputs = buildInputs;
       LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
       JAVA_HOME = "${pkgs.jdk21.home}";
-
 
       WEBKIT_DISABLE_COMPOSITING_MODE = 1; # Fix `Failed to get GBM device`
 
