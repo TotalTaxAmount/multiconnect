@@ -1,16 +1,18 @@
 [package]
-name = "multiconnect-networking"
-version = "0.0.1"
+name = "multiconnect-daemon"
+version = "0.0.0-DEV"
 edition = "2021"
 
-[lib]
-name = "multiconnect_networking"
-path = "src/lib.rs"
+[[bin]]
+name = "multiconnectd"
+path = "src/main.rs"
 
 [dependencies]
-tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 libp2p = { version = "0.52.4", features = ["tcp", "quic", "ping", "serde", "mdns", "noise", "yamux", "dns", "tokio", "macros"] }
+
+multiconnect-protocol = { path = "../multiconnect-protocol"}
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-log = "0.4.24"
+log = "0.4.22"
+pretty_env_logger = "0.5.0"
