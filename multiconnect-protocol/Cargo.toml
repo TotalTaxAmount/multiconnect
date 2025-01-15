@@ -12,3 +12,4 @@ log = "0.4.22"
 rand = "0.8.5"
 serde = { version = "1.0.217", features = [ "derive" ]}
 tokio = { version = "1", features = ["full"] }
+prost = "0.13"
