@@ -6,5 +6,8 @@
     "Multiaddr",
     "multiconnect",
     "tauri"
+  ],
+  "rust-analyzer.cargo.cfgs": [
+    "debug_assertion",
   ]
 }

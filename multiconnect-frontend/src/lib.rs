@@ -2,7 +2,6 @@ mod daemon;
 
 use std::{error::Error, sync::Arc};
 
-use daemon::Daemon;
 // use multiconnect_networking::{peer::Peer, NetworkManager};
 use tauri::State;
 use tokio::sync::Mutex;
@@ -17,8 +16,8 @@ pub async fn run() {
 
   // let network_manager: Arc<Mutex<NetworkManager>> =
   // NetworkManager::new().await.unwrap();
-  let mut daemon = Daemon::new().await.unwrap();
-  daemon.ping().await;
+  // let mut daemon = Daemon::new().await.unwrap();
+  // daemon.ping().await;
 
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
