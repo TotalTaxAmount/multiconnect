@@ -3222,7 +3222,9 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "serde",
+ "thiserror 2.0.11",
  "tokio",
+ "uid",
 ]
 
 [[package]]
@@ -6030,6 +6032,12 @@ dependencies = [
  "tempfile",
  "winapi",
 ]
+
+[[package]]
+name = "uid"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7041bb797d82c5728d3a4a40432809095d8acc59bdd9e67426a2529b3b80c9be"
 
 [[package]]
 name = "uint"

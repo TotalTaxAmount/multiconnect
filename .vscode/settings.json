@@ -5,6 +5,7 @@
     "mnds",
     "Multiaddr",
     "multiconnect",
+    "prost",
     "tauri"
   ],
   "rust-analyzer.cargo.cfgs": [

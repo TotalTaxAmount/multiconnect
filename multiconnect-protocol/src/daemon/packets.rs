@@ -1,7 +1,36 @@
+use uid::IdU32;
+
+// TODO: Look at alternative ways to do this
+#[derive(Debug, Clone, PartialEq)]
+pub enum Packet {
+  Ping(Ping),
+  Acknowledge(Acknowledge),
+  PeerFound(peer::PeerFound),
+  PeerPairRequest(peer::PeerPairRequest),
+  PeerConnect(peer::PeerConnect),
+  TransferStart(transfer::TransferStart),
+  TransferChunk(transfer::TransferChunk),
+  TransferEnd(transfer::TransferEnd),
+  TransferStatus(transfer::TransferStatus),
+  SmsMessage(SmsMessage),
+  Notify(Notify),
+}
+
+#[inline]
+fn create_id() -> u32 {
+  IdU32::<Packet>::new().get()
+}
+
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct Ping {
   #[prost(uint32, tag = "1")]
   pub id: u32,
+}
+
+impl Ping {
+  pub fn new() -> Self {
+    Self { id: create_id() }
+  }
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -10,6 +39,12 @@ pub struct Acknowledge {
   pub id: u32,
   #[prost(uint32, tag = "2")]
   pub req_id: u32,
+}
+
+impl Acknowledge {
+  pub fn new(req_id: u32) -> Self {
+    Self { id: create_id(), req_id }
+  }
 }
 
 pub mod peer {
@@ -33,6 +68,7 @@ pub mod peer {
 }
 
 pub mod transfer {
+
   #[derive(Clone, PartialEq, prost::Message)]
   pub struct TransferStart {
     #[prost(uint32, tag = "1")]

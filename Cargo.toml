@@ -2,5 +2,6 @@
 resolver = "2"
 members = [
   "multiconnect-frontend",
-  "multiconnect-daemon"
-, "multiconnect-protocol"]
+  "multiconnect-daemon", 
+  "multiconnect-protocol", 
+]
