@@ -1,11 +1,11 @@
 use std::{collections::VecDeque, error::Error, pin::Pin, sync::Arc};
 
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 use multiconnect_protocol::daemon::packets::{Acknowledge, Packet, Ping};
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
-  sync::Mutex,
+  sync::{watch, Mutex, Notify},
 };
 
 pub mod networking;
@@ -15,8 +15,10 @@ const PORT: u16 = 10999;
 pub struct Daemon {
   listener: TcpListener,
   queue: Arc<Mutex<VecDeque<Packet>>>,
+  notify: Arc<Notify>,
 }
 
+// TODO: Clean all this up
 impl Daemon {
   pub async fn new() -> Result<Self, std::io::Error> {
     let listener = match TcpListener::bind(format!("127.0.0.1:{}", PORT)).await {
@@ -29,94 +31,108 @@ impl Daemon {
 
     info!("Daemon listening on 127.0.0.1:{}", PORT);
 
-    Ok(Self { listener, queue: Arc::new(Mutex::new(VecDeque::new())) })
+    Ok(Self { listener, queue: Arc::new(Mutex::new(VecDeque::new())), notify: Arc::new(Notify::new()) })
   }
 
   pub async fn start(&self) -> Result<(), Box<dyn Error>> {
     while let Ok((stream, addr)) = self.listener.accept().await {
       info!("New connection from {}", addr);
-      let queue_clone = self.queue.clone();
+      let queue: Arc<Mutex<VecDeque<Packet>>> = Arc::clone(&self.queue);
+      let notify = Arc::clone(&self.notify);
 
-      tokio::spawn(async move { Self::handle(stream, queue_clone).await });
+      tokio::spawn(async move { Self::handle(stream, queue, notify).await });
     }
 
     Ok(())
   }
 
-  async fn handle(stream: TcpStream, queue: Arc<Mutex<VecDeque<Packet>>>) {
+  async fn handle(stream: TcpStream, queue: Arc<Mutex<VecDeque<Packet>>>, notify: Arc<Notify>) {
     let (mut read_half, mut write_half) = stream.into_split();
 
-    let queue_clone = queue.clone();
-    let read_task = tokio::spawn(async move {
-      'main: loop {
-        let mut raw: Vec<u8> = Vec::new();
-        let mut buf = [0; 4096];
-        while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
-          let len = match read_half.read(&mut buf).await {
-            Ok(0) => {
-              info!("Connection closed by peer");
-              break 'main;
-            },
-            Ok(len) => len,
-            Err(e) => {
-              error!("Read error: {}", e);
+    let queue_clone: Arc<Mutex<VecDeque<Packet>>> = Arc::clone(&queue);
+    let notify_clone = Arc::clone(&notify);
+
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(());
+    let mut shutdown_rx_clone = watch::Receiver::clone(&shutdown_rx);
+
+    let read_task = tokio::spawn({
+      let shutdown_tx = shutdown_tx.clone();
+      async move {
+        loop {
+          tokio::select! {
+            result = read_half.read_u16() => {
+              match result {
+                Ok(len) => {
+                  trace!("Len: {}", len);
+                  let mut raw: Vec<u8> = vec![0u8; len.into()];
+                  match read_half.read_exact(&mut raw).await {
+                  Ok(_) => {
+                    trace!("Bytes: {:?}", raw);
+                    let packet = match Packet::from_bytes(&raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                      error!("Error decoding packet {}", e);
+                      continue;
+                    }
+                  };
+
+                  debug!("Received {:?} packet", packet);
+
+                  let queue = Arc::clone(&queue_clone);
+                  match packet {
+                      Packet::Ping(ping) => {
+                        queue.lock().await.push_front(Packet::Acknowledge(Acknowledge::new(ping.id)));
+                        notify_clone.notify_one();
+                      }
+                      _ => {
+                        error!("Received unexpected packet")
+                      }
+                    }
+                  }
+                  Err(e) => {
+                    error!("Read error: {}", e);
+                    break;
+                  }
+                }
+              }
+              Err(_) => {
+                  info!("Connection closed by peer");
+                  break;
+                }
+              }
+            }
+            _ = shutdown_rx_clone.changed() => {
               break;
             }
-          };
-
-          raw.extend_from_slice(&buf[..len]);
-        }
-
-        if raw.is_empty() { continue; } 
-        let packet = match Packet::from_bytes(&raw[..(&raw.len() - 4)]) {
-          Ok(p) => p,
-          Err(e) => {
-            error!("Error decoding packet {}", e);
-            continue;
-          }
-        };
-
-        debug!("Received {:?} packet", packet);
-
-        let mut locked = queue_clone.lock().await;
-        match packet {
-          Packet::Ping(ping) => {
-            locked.push_front(Packet::Acknowledge(Acknowledge::new(ping.id)));
-          }
-          Packet::PeerFound(peer_found) => todo!(),
-          Packet::PeerPairRequest(peer_pair_request) => todo!(),
-          Packet::PeerConnect(peer_connect) => todo!(),
-          Packet::TransferStart(transfer_start) => todo!(),
-          Packet::TransferChunk(transfer_chunk) => todo!(),
-          Packet::TransferEnd(transfer_end) => todo!(),
-          Packet::TransferStatus(transfer_status) => todo!(),
-          Packet::SmsMessage(sms_message) => todo!(),
-          Packet::Notify(notify) => todo!(),
-          _ => {
-            error!("Received unexpected packet")
           }
         }
+        let _ = shutdown_tx.send(());
       }
     });
 
     let write_task = tokio::spawn(async move {
       loop {
-        let mut locked = queue.lock().await;
-        if let Some(packet) = locked.pop_back() {
-          debug!("Sending {:?} packet", packet);
-          let bytes = Packet::to_bytes(packet);
-          match bytes {
-            Ok(b) => {
-              if let Err(e) = write_half.write_all(&b).await {
-                error!("Write error: {}", e);
-                break;
-              };
-              let _ = write_half.flush().await;
+        tokio::select! {
+          _ = notify.notified() => {
+            let mut locked = queue.lock().await;
+            while let Some(packet) = locked.pop_back() {
+              debug!("Sending {:?} packet", packet);
+              let bytes = Packet::to_bytes(packet);
+              match bytes {
+                Ok(b) => {
+                  if let Err(e) = write_half.write_all(&b).await {
+                    error!("Write error: {}", e);
+                    break;
+                  };
+                  let _ = write_half.flush().await;
+                }
+                Err(_) => todo!(),
+              }
             }
-            Err(_) => todo!(),
           }
-        } else {
-          tokio::task::yield_now().await;
+          _ = shutdown_rx.changed() => {
+            break;
+          }
         }
       }
     });

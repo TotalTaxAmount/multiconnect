@@ -18,7 +18,6 @@ pub async fn run() {
   let daemon = Daemon::new().await.unwrap();
   monitor_daemon(daemon.clone()).await;
 
-  
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     // .manage(network_manager)
