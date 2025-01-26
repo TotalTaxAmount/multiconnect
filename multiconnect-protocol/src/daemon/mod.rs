@@ -16,6 +16,7 @@ pub enum PacketError {
 }
 
 impl Packet {
+  /// Convert a [`Packet`] to bytes as a [`Vec<u8>`]
   pub fn to_bytes(packet: Packet) -> Result<Vec<u8>, PacketError> {
     let mut buf = Vec::new();
     match packet {

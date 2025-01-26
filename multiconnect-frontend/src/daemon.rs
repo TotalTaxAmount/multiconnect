@@ -12,7 +12,7 @@ const PORT: u16 = 10999;
 
 pub struct Daemon {
   queue: Arc<Mutex<VecDeque<Packet>>>,
-  notify: Arc<Notify>
+  notify: Arc<Notify>,
 }
 
 impl Daemon {
@@ -41,6 +41,11 @@ impl Daemon {
         loop {
           match read_half.read_u16().await {
             Ok(len) => {
+              if len > u16::MAX {
+                error!("Packet is to big: {}", len);
+                continue;
+              }
+
               let mut raw: Vec<u8> = vec![0u8; len.into()];
               match read_half.read_exact(&mut raw).await {
                 Ok(_) => {
@@ -112,10 +117,6 @@ impl Daemon {
     });
 
     Ok(Arc::new(Mutex::new(Self { notify, queue })))
-  }
-
-  pub async fn ping(&mut self) {
-    self.add_to_queue(Packet::Ping(Ping::new())).await;
   }
 
   pub async fn add_to_queue(&mut self, packet: Packet) {

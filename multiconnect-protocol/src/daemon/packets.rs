@@ -48,10 +48,21 @@ impl Acknowledge {
 }
 
 pub mod peer {
+  use super::create_id;
+  use crate::p2p::Peer;
+
   #[derive(Clone, PartialEq, prost::Message)]
   pub struct PeerFound {
     #[prost(uint32, tag = "1")]
     pub id: u32,
+    #[prost(bytes, tag = "2")]
+    pub peer: Vec<u8>,
+  }
+
+  impl PeerFound {
+    pub fn new(peer: Peer) -> Self {
+      Self { id: create_id(), peer: bincode::serialize(&peer).unwrap() } // FIXME: Unsafe
+    }
   }
 
   #[derive(Clone, PartialEq, prost::Message)]

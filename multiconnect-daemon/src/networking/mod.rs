@@ -1,17 +1,20 @@
-pub mod peer;
-
 use std::{error::Error, sync::Arc};
 
 use libp2p::{
   futures::{lock, StreamExt},
   mdns, noise,
   swarm::{NetworkBehaviour, SwarmEvent},
-  tcp, yamux, Multiaddr, Swarm, SwarmBuilder,
+  tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use log::{debug, error, info};
-use peer::Peer;
+use multiconnect_protocol::{
+  daemon::packets::{peer::PeerFound, Packet},
+  p2p::Peer,
+};
 use tokio::{select, sync::Mutex};
 use tracing_subscriber::EnvFilter;
+
+use crate::SharedDaemon;
 
 #[derive(NetworkBehaviour)]
 struct MulticonnectBehavior {
@@ -28,14 +31,14 @@ impl MulticonnectBehavior {
 
 pub struct NetworkManager {
   swarm: Arc<Mutex<Swarm<MulticonnectBehavior>>>,
-  peers: Arc<Mutex<Vec<Peer>>>,
 }
 
 impl NetworkManager {
-  pub async fn new() -> Result<Arc<Mutex<Self>>, Box<dyn Error>> {
+  pub async fn new(daemon: SharedDaemon) -> Result<Arc<Mutex<Self>>, Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
+    let (p_sender, mut p_receiver) =
+      tokio::sync::mpsc::channel(100);
 
-    let peers = Arc::new(Mutex::new(Vec::new()));
     debug!("Initializing new swarm");
 
     let swarm = Arc::new(Mutex::new(
@@ -64,21 +67,22 @@ impl NetworkManager {
     }
 
     let swarm_clone = swarm.clone();
-    let peers_clone = peers.clone();
 
-    tokio::spawn(async move {
+    let p2p_task = tokio::spawn(async move {
       let mut locked = swarm_clone.lock().await;
       loop {
         select! {
           event = locked.select_next_some() => match event {
             SwarmEvent::NewListenAddr { address, ..} => {
               info!("Multiconnect listing on {:?}", address);
+
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                let mut locked = peers_clone.lock().await;
-                locked.push(Peer { peer_id, multiaddr });
+                let peer = Peer { peer_id, multiaddr };
+                info!("Sending peer");
+                let _ = p_sender.send(peer).await;
               }
             }
             _ => {}
@@ -87,12 +91,18 @@ impl NetworkManager {
       }
     });
 
-    Ok(Arc::new(Mutex::new(Self { swarm, peers })))
-  }
+    let daemon_task = tokio::spawn(async move {
+      info!("Bro??");
+      while let Some(peer) = p_receiver.recv().await {
+        info!("Now sending the packet fr");
+        info!("Received peer: {:?}", peer);
+        let mut locked = daemon.lock().await;
+        info!("Aquired a lock");
+        locked.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
+    }
+    });
 
-  pub async fn list_peers(&self) -> Vec<Peer> {
-    let locked = self.peers.lock().await;
-    locked.clone()
+    Ok(Arc::new(Mutex::new(Self { swarm })))
   }
 }
 

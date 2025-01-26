@@ -1,4 +1,4 @@
-use multiconnect_daemon::Daemon;
+use multiconnect_daemon::{networking::NetworkManager, Daemon};
 use std::error::Error;
 
 #[tokio::main]
@@ -9,5 +9,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
   pretty_env_logger::formatted_timed_builder().parse_env("MULTICONNECT_LOG").format_timestamp_secs().init();
 
-  Daemon::new().await?.start().await
+  let daemon = Daemon::new().await?;
+  let network_manager = NetworkManager::new(daemon.clone()).await;
+
+  let _ = daemon.lock().await.start().await;
+
+  Ok(())
 }

@@ -1,3 +1,5 @@
+pub mod networking;
+
 use std::{collections::VecDeque, error::Error, pin::Pin, sync::Arc};
 
 use log::{debug, error, info, trace};
@@ -8,7 +10,7 @@ use tokio::{
   sync::{watch, Mutex, Notify},
 };
 
-pub mod networking;
+pub type SharedDaemon = Arc<Mutex<Daemon>>;
 
 const PORT: u16 = 10999;
 
@@ -20,8 +22,10 @@ pub struct Daemon {
 
 // TODO: Clean all this up
 impl Daemon {
-  pub async fn new() -> Result<Self, std::io::Error> {
-    let listener = match TcpListener::bind(format!("127.0.0.1:{}", PORT)).await {
+  pub async fn new() -> Result<SharedDaemon, std::io::Error> {
+    let port = std::env::var("MC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(PORT);
+
+    let listener = match TcpListener::bind(format!("127.0.0.1:{}", port)).await {
       Ok(l) => l,
       Err(e) => {
         error!("Failed to start daemon (is it already running?)");
@@ -29,9 +33,13 @@ impl Daemon {
       }
     };
 
-    info!("Daemon listening on 127.0.0.1:{}", PORT);
+    info!("Daemon listening on 127.0.0.1:{}", port);
 
-    Ok(Self { listener, queue: Arc::new(Mutex::new(VecDeque::new())), notify: Arc::new(Notify::new()) })
+    Ok(Arc::new(Mutex::new(Self {
+      listener,
+      queue: Arc::new(Mutex::new(VecDeque::new())),
+      notify: Arc::new(Notify::new()),
+    })))
   }
 
   pub async fn start(&self) -> Result<(), Box<dyn Error>> {
@@ -64,6 +72,11 @@ impl Daemon {
               match result {
                 Ok(len) => {
                   trace!("Len: {}", len);
+                  if len > u16::MAX {
+                    error!("Packet is to big: {}", len);
+                    continue;
+                  }
+
                   let mut raw: Vec<u8> = vec![0u8; len.into()];
                   match read_half.read_exact(&mut raw).await {
                   Ok(_) => {
@@ -114,6 +127,7 @@ impl Daemon {
       loop {
         tokio::select! {
           _ = notify.notified() => {
+            info!("NOTI");
             let mut locked = queue.lock().await;
             while let Some(packet) = locked.pop_back() {
               debug!("Sending {:?} packet", packet);
@@ -131,6 +145,7 @@ impl Daemon {
             }
           }
           _ = shutdown_rx.changed() => {
+            info!("Shutting down stream for");
             break;
           }
         }
@@ -138,5 +153,12 @@ impl Daemon {
     });
 
     let _ = tokio::try_join!(read_task, write_task);
+  }
+
+  pub async fn add_to_queue(&mut self, packet: Packet) {
+    info!("Adding to queue");
+    self.queue.lock().await.push_front(packet);
+    self.notify.notify_one();
+    info!("Added to queue");
   }
 }
