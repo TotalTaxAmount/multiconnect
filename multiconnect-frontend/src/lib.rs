@@ -3,6 +3,7 @@ mod daemon;
 use std::{sync::Arc, time::Duration};
 
 use daemon::Daemon;
+use log::info;
 use multiconnect_protocol::{Packet, daemon::Ping};
 use tokio::{sync::Mutex, time::interval};
 
@@ -16,29 +17,34 @@ pub async fn run() {
 
   // let network_manager: Arc<Mutex<NetworkManager>> =
   // NetworkManager::new().await.unwrap();
-  let daemon = Daemon::new().await.unwrap();
-  monitor_daemon(daemon.clone()).await;
+  let daemon = Daemon::connect().await.unwrap();
+  monitor(daemon.clone()).await;
 
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    // .manage(network_manager)
+    // .manage(self)
     .invoke_handler(tauri::generate_handler![])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
 
-async fn monitor_daemon(daemon: Arc<Mutex<Daemon>>) {
+async fn monitor(daemon: Arc<Mutex<Daemon>>) {
   tokio::spawn(async move {
-    let mut interval = interval(Duration::from_secs(3));
-
     loop {
-      interval.tick().await;
-      daemon.lock().await.add_to_queue(Packet::Ping(Ping::new())).await;
+      match daemon.lock().await.on_packet().await {
+        Some(Packet::PeerFound(p)) => {
+          info!("Found a peer");
+        },
+        Some(_) |
+        None => {
+          info!("?");
+        },
+      }
     }
   });
 }
-// #[tauri::command]
-// async fn list_peers(network_manager: State<'_, Arc<Mutex<NetworkManager>>>)
-// -> Result<Vec<Peer>, ()> {   let manager = network_manager.lock().await;
-//   Ok(manager.list_peers().await)
-// }
+#[tauri::command]
+async fn list_peers(network_manager: State<'_, Arc<Mutex<NetworkManager>>>)
+-> Result<Vec<Peer>, ()> {   let manager = network_manager.lock().await;
+  Ok(manager.list_peers().await)
+}
