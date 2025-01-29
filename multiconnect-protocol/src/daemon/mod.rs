@@ -1,66 +1,111 @@
-pub mod packets;
+use crate::Packet;
 
-use log::{debug, error, trace};
-use packets::*;
-use prost::{EncodeError, Message};
-use thiserror::Error;
-
-#[derive(Debug, Clone, Error)]
-pub enum PacketError {
-  #[error("Malformed packet")]
-  MalformedPacket,
-  #[error("Invalid packet")]
-  InvalidPacket(String),
-  #[error("Failed to encode packet")]
-  EncodeError,
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct Ping {
+  #[prost(uint32, tag = "1")]
+  pub id: u32,
 }
 
-impl Packet {
-  /// Convert a [`Packet`] to bytes as a [`Vec<u8>`]
-  pub fn to_bytes(packet: Packet) -> Result<Vec<u8>, PacketError> {
-    let mut buf = Vec::new();
-    match packet {
-      Packet::Ping(ping) => {
-        buf.push(0);
-        ping.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::Acknowledge(acknowledge) => {
-        buf.push(1);
-        acknowledge.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::PeerFound(peer_found) => todo!(),
-      Packet::PeerPairRequest(peer_pair_request) => todo!(),
-      Packet::PeerConnect(peer_connect) => todo!(),
-      Packet::TransferStart(transfer_start) => todo!(),
-      Packet::TransferChunk(transfer_chunk) => todo!(),
-      Packet::TransferEnd(transfer_end) => todo!(),
-      Packet::TransferStatus(transfer_status) => todo!(),
-      Packet::SmsMessage(sms_message) => todo!(),
-      Packet::Notify(notify) => todo!(),
-    }
-    if buf.len() > u16::MAX.into() {
-      return Err(PacketError::InvalidPacket("Packet is too big".into()));
-    }
+impl Ping {
+  pub fn new() -> Self {
+    Self { id: Packet::create_id() }
+  }
+}
 
-    let len = buf.len() as u16;
-    let mut send_buf = Vec::with_capacity((2 + len).into());
-    send_buf.extend_from_slice(&len.to_be_bytes());
-    send_buf.extend_from_slice(&buf);
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct Acknowledge {
+  #[prost(uint32, tag = "1")]
+  pub id: u32,
+  #[prost(uint32, tag = "2")]
+  pub req_id: u32,
+}
 
-    trace!("Real len: {}", len);
-    trace!("Raw bytes: {:?}", send_buf);
-    Ok(send_buf)
+impl Acknowledge {
+  pub fn new(req_id: u32) -> Self {
+    Self { id: Packet::create_id(), req_id }
+  }
+}
+
+pub mod peer {
+  use crate::{p2p::Peer, Packet};
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct PeerFound {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(bytes, tag = "2")]
+    pub peer: Vec<u8>,
   }
 
-  pub fn from_bytes(bytes: &[u8]) -> Result<Packet, PacketError> {
-    let (packet_type, data) = (bytes[0], &bytes[1..]);
-    match packet_type {
-      0 => Ok(Packet::Ping(Ping::decode(data).map_err(|e| PacketError::MalformedPacket)?)),
-      1 => Ok(Packet::Acknowledge(Acknowledge::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
-      _ => {
-        error!("Unknown packet type {}", packet_type);
-        Err(PacketError::InvalidPacket("Unknown packet type".into()))
-      }
+  impl PeerFound {
+    pub fn new(peer: Peer) -> Self {
+      Self { id: Packet::create_id(), peer: bincode::serialize(&peer).unwrap() } // FIXME: Unsafe
     }
   }
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct PeerPairRequest {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+  }
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct PeerConnect {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+  }
+}
+
+pub mod transfer {
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct TransferStart {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(uint64, tag = "2")]
+    pub total_len: u64,
+  }
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct TransferChunk {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(uint64, tag = "2")]
+    pub len: u64,
+    #[prost(bytes, tag = "3")]
+    pub data: Vec<u8>,
+  }
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct TransferEnd {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+  }
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct TransferStatus {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(enumeration = "Status", tag = "2")]
+    pub status: i32,
+  }
+
+  #[derive(Clone, PartialEq, Eq, Debug, prost::Enumeration)]
+  #[repr(i32)]
+  pub enum Status {
+    Ok = 0,
+    MalformedPacket = -1,
+  }
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct SmsMessage {
+  #[prost(uint32, tag = "1")]
+  pub id: u32,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct Notify {
+  #[prost(uint32, tag = "1")]
+  pub id: u32,
 }

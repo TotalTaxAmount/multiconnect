@@ -3227,6 +3227,7 @@ dependencies = [
 name = "multiconnect-protocol"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bincode",
  "libp2p",
  "log",

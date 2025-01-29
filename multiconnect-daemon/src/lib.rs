@@ -3,7 +3,7 @@ pub mod networking;
 use std::{collections::VecDeque, error::Error, pin::Pin, sync::Arc};
 
 use log::{debug, error, info, trace};
-use multiconnect_protocol::daemon::packets::{Acknowledge, Packet, Ping};
+use multiconnect_protocol::{daemon::Acknowledge, Packet};
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
@@ -35,11 +35,15 @@ impl Daemon {
 
     info!("Daemon listening on 127.0.0.1:{}", port);
 
-    Ok(Arc::new(Mutex::new(Self {
+    let daemon = Self {
       listener,
       queue: Arc::new(Mutex::new(VecDeque::new())),
       notify: Arc::new(Notify::new()),
-    })))
+    };
+
+    daemon.start();
+
+    Ok(Arc::new(Mutex::new(daemon)))
   }
 
   pub async fn start(&self) -> Result<(), Box<dyn Error>> {

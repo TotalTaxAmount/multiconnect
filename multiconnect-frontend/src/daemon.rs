@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, ops::Not, sync::Arc};
 
 use log::{debug, error, info, warn};
-use multiconnect_protocol::daemon::packets::{Packet, Ping};
+use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpSocket,

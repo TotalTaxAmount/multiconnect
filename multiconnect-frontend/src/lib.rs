@@ -3,7 +3,7 @@ mod daemon;
 use std::{sync::Arc, time::Duration};
 
 use daemon::Daemon;
-use multiconnect_protocol::daemon::packets::{Packet, Ping};
+use multiconnect_protocol::{Packet, daemon::Ping};
 use tokio::{sync::Mutex, time::interval};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
