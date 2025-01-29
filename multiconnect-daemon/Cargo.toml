@@ -14,5 +14,5 @@ libp2p = { version = "0.52.4", features = ["tcp", "quic", "ping", "serde", "mdns
 
 multiconnect-protocol = { path = "../multiconnect-protocol"}
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-log = "0.4.22"
+log = "0.4.25"
 pretty_env_logger = "0.5.0"
