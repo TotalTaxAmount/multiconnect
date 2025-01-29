@@ -1,11 +1,12 @@
 mod daemon;
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use daemon::Daemon;
+use daemon::{Daemon, DaemonController};
 use log::info;
-use multiconnect_protocol::{Packet, daemon::Ping};
-use tokio::{sync::Mutex, time::interval};
+use multiconnect_protocol::{p2p::Peer, Packet};
+use tauri::State;
+use tokio::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {
@@ -18,33 +19,18 @@ pub async fn run() {
   // let network_manager: Arc<Mutex<NetworkManager>> =
   // NetworkManager::new().await.unwrap();
   let daemon = Daemon::connect().await.unwrap();
-  monitor(daemon.clone()).await;
+  let controller = DaemonController::bind(daemon).await;
 
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    // .manage(self)
-    .invoke_handler(tauri::generate_handler![])
+    .manage(controller)
+    .invoke_handler(tauri::generate_handler![list_peers])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
 
-async fn monitor(daemon: Arc<Mutex<Daemon>>) {
-  tokio::spawn(async move {
-    loop {
-      match daemon.lock().await.on_packet().await {
-        Some(Packet::PeerFound(p)) => {
-          info!("Found a peer");
-        },
-        Some(_) |
-        None => {
-          info!("?");
-        },
-      }
-    }
-  });
-}
 #[tauri::command]
-async fn list_peers(network_manager: State<'_, Arc<Mutex<NetworkManager>>>)
--> Result<Vec<Peer>, ()> {   let manager = network_manager.lock().await;
-  Ok(manager.list_peers().await)
+async fn list_peers(controller: State<'_, DaemonController>) -> Result<Vec<Peer>, ()> {
+  Ok(controller.get_peers().await)
 }
+2

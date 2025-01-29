@@ -88,7 +88,7 @@ impl NetworkManager {
     let daemon_task = tokio::spawn(async move {
       while let Some(peer) = p_receiver.recv().await {
         daemon.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
-    }
+      }
     });
 
     Ok(Arc::new(Mutex::new(Self {})))

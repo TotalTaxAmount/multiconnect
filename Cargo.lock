@@ -3286,6 +3286,7 @@ dependencies = [
 name = "multiconnect"
 version = "0.0.0-DEV"
 dependencies = [
+ "bincode",
  "log",
  "multiconnect-protocol",
  "pretty_env_logger",

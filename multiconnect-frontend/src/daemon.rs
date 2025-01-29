@@ -1,14 +1,16 @@
-use std::{collections::VecDeque, ops::Not, sync::Arc};
+use std::{collections::{HashSet, VecDeque}, ops::Not, sync::Arc};
 
 use log::{debug, error, info, warn};
-use multiconnect_protocol::Packet;
+use multiconnect_protocol::{daemon::peer::PeerFound, p2p::Peer, Packet};
+use serde::{Deserialize, Serialize};
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpSocket,
-  sync::{Mutex, Notify, mpsc},
+  sync::{mpsc, Mutex, Notify}, time::Sleep,
 };
 
 type Queue = Arc<(Notify, Mutex<VecDeque<Packet>>)>;
+type SharedDaemon = Arc<Mutex<Daemon>>;
 const PORT: u16 = 10999;
 
 pub struct Daemon {
@@ -18,7 +20,7 @@ pub struct Daemon {
 
 impl Daemon {
   /// Connect to the daemon and establish a [`TcpStream`]
-  pub async fn connect() -> Result<Arc<Mutex<Self>>, Box<dyn std::error::Error>> {
+  pub async fn connect() -> Result<SharedDaemon, Box<dyn std::error::Error>> {
     let socket = TcpSocket::new_v4()?;
     let stream = match socket.connect(format!("127.0.0.1:{}", PORT).parse()?).await {
       Ok(s) => s,
@@ -131,5 +133,39 @@ impl Daemon {
 
   pub async fn on_packet(&mut self) -> Option<Packet> {
     self.packet_rx.recv().await
+  }
+}
+
+pub struct DaemonController {
+  peers: Arc<Mutex<HashSet<Peer>>>
+}
+
+impl DaemonController {
+  pub async fn bind(daemon: SharedDaemon) -> Self {
+    let peers = Arc::new(Mutex::new(HashSet::new()));
+    let peers_clone = Arc::clone(&peers);
+
+    tokio::spawn(async move {
+      let mut daemon_lock = daemon.lock().await;
+      loop {
+        match daemon_lock.on_packet().await {
+          Some(Packet::PeerFound(p)) => {
+            peers_clone.lock().await.insert(bincode::deserialize(&p.peer).unwrap());
+          },
+          Some(_) |
+          None => {
+            warn!("Received a packet but it is None");
+          },
+        }
+      }
+      
+    });
+
+    Self { peers}
+  }
+
+  pub async fn get_peers(&self) -> Vec<Peer> {
+    let locked = self.peers.lock().await;
+    locked.clone().into_iter().collect()
   }
 }
