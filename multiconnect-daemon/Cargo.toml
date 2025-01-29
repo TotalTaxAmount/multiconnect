@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-libp2p = { version = "0.52.4", features = ["tcp", "quic", "ping", "serde", "mdns", "noise", "yamux", "dns", "tokio", "macros"] }
+libp2p = { version = "0.55.0", features = ["tcp", "quic", "ping", "serde", "mdns", "noise", "yamux", "dns", "tokio", "macros"] }
 
 multiconnect-protocol = { path = "../multiconnect-protocol"}
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
