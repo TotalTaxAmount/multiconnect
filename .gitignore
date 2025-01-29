@@ -1,4 +1,10 @@
-.direnv
+# Node/svelte
 .svelte-kit/
 node_modules/
+build/
+
+#  Rust
 target/
+
+# Dev
+.direnv
