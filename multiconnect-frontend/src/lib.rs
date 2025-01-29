@@ -33,4 +33,3 @@ pub async fn run() {
 async fn list_peers(controller: State<'_, DaemonController>) -> Result<Vec<Peer>, ()> {
   Ok(controller.get_peers().await)
 }
-2
