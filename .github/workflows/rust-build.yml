@@ -1,0 +1,40 @@
+name: Build Rust Apps
+
+on:
+  pull_request:
+    paths:
+      - 'multiconnect-daemon/**'
+      - 'multiconnect-frontend/**'
+
+jobs:
+  build-daemon:
+    name: Build multiconnect-daemon
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build multiconnect-daemon
+        working-directory: ./multiconnect-daemon
+        run: |
+          cargo build --release
+
+  build-frontend:
+    name: Build multiconnect-frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build multiconnect-frontend
+        working-directory: ./multiconnect-frontend
+        run: |
+          cargo build --release
