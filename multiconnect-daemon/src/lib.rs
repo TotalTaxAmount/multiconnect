@@ -10,10 +10,11 @@ use tokio::{
   sync::{watch, Mutex, Notify},
 };
 
-pub type SharedDaemon = Arc<Mutex<Daemon>>;
+pub type SharedDaemon = Arc<Daemon>;
 
 const PORT: u16 = 10999;
 
+#[derive(Debug)]
 pub struct Daemon {
   listener: TcpListener,
   queue: Arc<Mutex<VecDeque<Packet>>>,
@@ -35,18 +36,18 @@ impl Daemon {
 
     info!("Daemon listening on 127.0.0.1:{}", port);
 
-    let daemon = Self {
+    let daemon = Arc::new(Self {
       listener,
       queue: Arc::new(Mutex::new(VecDeque::new())),
       notify: Arc::new(Notify::new()),
-    };
+    });
 
-    daemon.start();
-
-    Ok(Arc::new(Mutex::new(daemon)))
+    // let clone = Arc::clone(&daemon);
+    // let _  = tokio::spawn(async move {clone.start().await });
+    Ok(daemon)
   }
 
-  pub async fn start(&self) -> Result<(), Box<dyn Error>> {
+  pub async fn start(&self) {
     while let Ok((stream, addr)) = self.listener.accept().await {
       info!("New connection from {}", addr);
       let queue: Arc<Mutex<VecDeque<Packet>>> = Arc::clone(&self.queue);
@@ -55,7 +56,7 @@ impl Daemon {
       tokio::spawn(async move { Self::handle(stream, queue, notify).await });
     }
 
-    Ok(())
+    // Ok(())
   }
 
   async fn handle(stream: TcpStream, queue: Arc<Mutex<VecDeque<Packet>>>, notify: Arc<Notify>) {
@@ -149,7 +150,7 @@ impl Daemon {
             }
           }
           _ = shutdown_rx.changed() => {
-            info!("Shutting down stream for");
+            info!("Shutting down stream for client");
             break;
           }
         }
@@ -159,7 +160,7 @@ impl Daemon {
     let _ = tokio::try_join!(read_task, write_task);
   }
 
-  pub async fn add_to_queue(&mut self, packet: Packet) {
+  pub async fn add_to_queue(&self, packet: Packet) {
     info!("Adding to queue");
     self.queue.lock().await.push_front(packet);
     self.notify.notify_one();

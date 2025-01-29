@@ -12,7 +12,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
   let daemon = Daemon::new().await?;
   let network_manager = NetworkManager::new(daemon.clone()).await;
 
-  let _ = daemon.lock().await.start().await;
+
+  let _ = daemon.start().await;
 
   Ok(())
 }

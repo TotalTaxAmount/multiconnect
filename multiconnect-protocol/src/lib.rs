@@ -2,7 +2,7 @@ pub mod daemon;
 pub mod p2p;
 
 use log::{debug, error, trace};
-use daemon::*;
+use daemon::{peer::PeerFound, *};
 use prost::Message;
 use thiserror::Error;
 use uid::IdU32;
@@ -50,7 +50,10 @@ impl Packet {
         buf.push(1);
         acknowledge.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
       }
-      Packet::PeerFound(peer_found) => todo!(),
+      Packet::PeerFound(peer_found) => {
+        buf.push(2);
+        peer_found.encode(&mut buf).map_err(|_| PacketError::EncodeError)?; 
+      },
       Packet::PeerPairRequest(peer_pair_request) => todo!(),
       Packet::PeerConnect(peer_connect) => todo!(),
       Packet::TransferStart(transfer_start) => todo!(),
@@ -79,6 +82,7 @@ impl Packet {
     match packet_type {
       0 => Ok(Packet::Ping(Ping::decode(data).map_err(|e| PacketError::MalformedPacket)?)),
       1 => Ok(Packet::Acknowledge(Acknowledge::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      2 => Ok(Packet::PeerFound(PeerFound::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       _ => {
         error!("Unknown packet type {}", packet_type);
         Err(PacketError::InvalidPacket("Unknown packet type".into()))

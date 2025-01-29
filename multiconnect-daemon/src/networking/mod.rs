@@ -87,9 +87,7 @@ impl NetworkManager {
 
     let daemon_task = tokio::spawn(async move {
       while let Some(peer) = p_receiver.recv().await {
-        let mut locked = daemon.lock().await;
-        info!("Locked daemon");
-        locked.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
+        daemon.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
     }
     });
 
