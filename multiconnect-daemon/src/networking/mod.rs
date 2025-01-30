@@ -1,3 +1,5 @@
+pub mod keystore;
+
 use std::{error::Error, sync::Arc};
 
 use libp2p::{

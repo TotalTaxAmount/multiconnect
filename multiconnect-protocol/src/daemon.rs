@@ -47,6 +47,18 @@ pub mod peer {
   pub struct PeerPairRequest {
     #[prost(uint32, tag = "1")]
     pub id: u32,
+    #[prost(bytes, tag = "2")]
+    pub peer_id: Vec<u8>
+  }
+
+  #[derive(Clone, PartialEq, prost::Message)]
+  pub struct PeerPairResponse {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(bool, tag = "2")]
+    pub accepted: bool,
+    #[prost(bytes, tag = "3")]
+    pub public_key: Vec<u8>,
   }
 
   #[derive(Clone, PartialEq, prost::Message)]

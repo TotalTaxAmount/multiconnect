@@ -1,8 +1,9 @@
 pub mod daemon;
 pub mod p2p;
 
+use libp2p::core::peer_record;
 use log::{debug, error, trace};
-use daemon::{peer::PeerFound, *};
+use daemon::{peer::{PeerFound, PeerPairRequest, PeerPairResponse}, *};
 use prost::Message;
 use thiserror::Error;
 use uid::IdU32;
@@ -23,7 +24,7 @@ pub enum Packet {
   Acknowledge(Acknowledge),
   PeerFound(peer::PeerFound),
   PeerPairRequest(peer::PeerPairRequest),
-  PeerConnect(peer::PeerConnect),
+  PeerPairResponse(peer::PeerPairResponse),
   TransferStart(transfer::TransferStart),
   TransferChunk(transfer::TransferChunk),
   TransferEnd(transfer::TransferEnd),
@@ -54,8 +55,14 @@ impl Packet {
         buf.push(2);
         peer_found.encode(&mut buf).map_err(|_| PacketError::EncodeError)?; 
       },
-      Packet::PeerPairRequest(peer_pair_request) => todo!(),
-      Packet::PeerConnect(peer_connect) => todo!(),
+      Packet::PeerPairRequest(peer_pair_request) => {
+        buf.push(3);
+        peer_pair_request.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
+      },
+      Packet::PeerPairResponse(peer_pair_response) => {
+        buf.push(4);
+        peer_pair_response.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
+      },
       Packet::TransferStart(transfer_start) => todo!(),
       Packet::TransferChunk(transfer_chunk) => todo!(),
       Packet::TransferEnd(transfer_end) => todo!(),
@@ -80,9 +87,11 @@ impl Packet {
   pub fn from_bytes(bytes: &[u8]) -> Result<Packet, PacketError> {
     let (packet_type, data) = (bytes[0], &bytes[1..]);
     match packet_type {
-      0 => Ok(Packet::Ping(Ping::decode(data).map_err(|e| PacketError::MalformedPacket)?)),
+      0 => Ok(Packet::Ping(Ping::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       1 => Ok(Packet::Acknowledge(Acknowledge::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       2 => Ok(Packet::PeerFound(PeerFound::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      3 => Ok(Packet::PeerPairRequest(PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      4 => Ok(Packet::PeerPairResponse(PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       _ => {
         error!("Unknown packet type {}", packet_type);
         Err(PacketError::InvalidPacket("Unknown packet type".into()))
