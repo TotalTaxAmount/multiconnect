@@ -1,4 +1,5 @@
 pub mod networking;
+pub mod config;
 
 use std::{collections::VecDeque, error::Error, pin::Pin, sync::Arc};
 
