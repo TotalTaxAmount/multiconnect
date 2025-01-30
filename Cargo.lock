@@ -3302,6 +3302,9 @@ dependencies = [
 name = "multiconnect-daemon"
 version = "0.0.0-DEV"
 dependencies = [
+ "bincode",
+ "dirs 6.0.0",
+ "lazy_static",
  "libp2p",
  "log",
  "multiconnect-protocol",
