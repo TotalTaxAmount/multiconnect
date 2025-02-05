@@ -1,4 +1,8 @@
-use std::{collections::{HashSet, VecDeque}, ops::Not, sync::Arc};
+use std::{
+  collections::{HashSet, VecDeque},
+  ops::Not,
+  sync::Arc,
+};
 
 use log::{debug, error, info, warn};
 use multiconnect_protocol::{daemon::peer::PeerFound, p2p::Peer, Packet};
@@ -6,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpSocket,
-  sync::{mpsc, Mutex, Notify}, time::Sleep,
+  sync::{mpsc, Mutex, Notify},
+  time::Sleep,
 };
 
 type Queue = Arc<(Notify, Mutex<VecDeque<Packet>>)>;
@@ -15,7 +20,7 @@ const PORT: u16 = 10999;
 
 pub struct Daemon {
   queue: Queue,
-  packet_rx: mpsc::Receiver<Packet>,  
+  packet_rx: mpsc::Receiver<Packet>,
 }
 
 impl Daemon {
@@ -68,8 +73,8 @@ impl Daemon {
                   // let mut locked = read_queue_clone.lock().await;
                   // match packet {
                   //   Packet::Acknowledge(acknowledge) => {
-                  //     debug!("Received ack for ping req {}", acknowledge.req_id);
-                  //   }
+                  //     debug!("Received ack for ping req {}",
+                  // acknowledge.req_id);   }
                   //   Packet::PeerFound(peer_found) => todo!(),
                   //   Packet::PeerPairRequest(peer_pair_request) => todo!(),
                   //   Packet::PeerConnect(peer_connect) => todo!(),
@@ -137,7 +142,7 @@ impl Daemon {
 }
 
 pub struct DaemonController {
-  peers: Arc<Mutex<HashSet<Peer>>>
+  peers: Arc<Mutex<HashSet<Peer>>>,
 }
 
 impl DaemonController {
@@ -151,17 +156,15 @@ impl DaemonController {
         match daemon_lock.on_packet().await {
           Some(Packet::PeerFound(p)) => {
             peers_clone.lock().await.insert(bincode::deserialize(&p.peer).unwrap());
-          },
-          Some(_) |
-          None => {
+          }
+          Some(_) | None => {
             warn!("Received a packet but it is None");
-          },
+          }
         }
       }
-      
     });
 
-    Self { peers}
+    Self { peers }
   }
 
   pub async fn get_peers(&self) -> Vec<Peer> {

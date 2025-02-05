@@ -1,9 +1,12 @@
 pub mod daemon;
 pub mod p2p;
 
+use daemon::{
+  peer::{PeerFound, PeerPairRequest, PeerPairResponse},
+  *,
+};
 use libp2p::core::peer_record;
 use log::{debug, error, trace};
-use daemon::{peer::{PeerFound, PeerPairRequest, PeerPairResponse}, *};
 use prost::Message;
 use thiserror::Error;
 use uid::IdU32;
@@ -53,16 +56,16 @@ impl Packet {
       }
       Packet::PeerFound(peer_found) => {
         buf.push(2);
-        peer_found.encode(&mut buf).map_err(|_| PacketError::EncodeError)?; 
-      },
+        peer_found.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
+      }
       Packet::PeerPairRequest(peer_pair_request) => {
         buf.push(3);
         peer_pair_request.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      },
+      }
       Packet::PeerPairResponse(peer_pair_response) => {
         buf.push(4);
         peer_pair_response.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      },
+      }
       Packet::TransferStart(transfer_start) => todo!(),
       Packet::TransferChunk(transfer_chunk) => todo!(),
       Packet::TransferEnd(transfer_end) => todo!(),
@@ -99,4 +102,3 @@ impl Packet {
     }
   }
 }
-

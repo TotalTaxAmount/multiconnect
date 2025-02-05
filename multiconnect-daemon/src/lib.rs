@@ -1,5 +1,5 @@
-pub mod networking;
 pub mod config;
+pub mod networking;
 
 use std::{collections::VecDeque, error::Error, pin::Pin, sync::Arc};
 
@@ -22,8 +22,7 @@ pub struct Daemon {
   queue: Queue,
   // notify: Arc<Notify>,
   packet_tx: mpsc::Sender<Packet>,
-  packet_rx: mpsc::Receiver<Packet>
-
+  packet_rx: mpsc::Receiver<Packet>,
 }
 
 // TODO: Clean all this up
@@ -43,14 +42,9 @@ impl Daemon {
 
     let (packet_tx, packet_rx) = mpsc::channel(100);
 
-    let queue: Queue  = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
+    let queue: Queue = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
 
-    let daemon = Arc::new(Self {
-      listener,
-      queue,
-      packet_tx,
-      packet_rx
-    });
+    let daemon = Arc::new(Self { listener, queue, packet_tx, packet_rx });
 
     // let clone = Arc::clone(&daemon);
     // let _  = tokio::spawn(async move {clone.start().await });
@@ -62,7 +56,7 @@ impl Daemon {
       info!("New connection from {}", addr);
       let packet_tx_clone = self.packet_tx.clone();
       let queue_clone = Arc::clone(&self.queue);
-      
+
       tokio::spawn(async move { Self::handle(stream, packet_tx_clone, queue_clone).await });
     }
 

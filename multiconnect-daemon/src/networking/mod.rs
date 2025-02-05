@@ -1,17 +1,20 @@
-pub mod keystore;
+mod keystore;
+mod pairing;
 
-use std::{error::Error, sync::Arc};
+use std::{error::Error, hash::Hash, rc::Rc, sync::Arc};
 
+use keystore::KeyStore;
 use libp2p::{
   futures::{lock, StreamExt},
+  identity::{self, Keypair},
   mdns, noise,
+  request_response::{self, Config, Event, ProtocolSupport},
   swarm::{NetworkBehaviour, SwarmEvent},
   tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
-use log::{debug, error, info};
-use multiconnect_protocol::{
-  daemon::peer::PeerFound, p2p::Peer, Packet
-};
+use log::{debug, error, info, trace};
+use multiconnect_protocol::{daemon::peer::PeerFound, p2p::Peer, Packet};
+use pairing::{PairingCodec, PairingRequest, PairingResponse};
 use tokio::{select, sync::Mutex};
 use tracing_subscriber::EnvFilter;
 
@@ -20,13 +23,19 @@ use crate::SharedDaemon;
 #[derive(NetworkBehaviour)]
 struct MulticonnectBehavior {
   mnds: mdns::tokio::Behaviour,
+  pairing: request_response::Behaviour<PairingCodec>,
 }
 
 impl MulticonnectBehavior {
   pub fn new(key: &libp2p::identity::Keypair) -> Result<Self, Box<dyn Error>> {
     let mnds_cfg = mdns::Config { query_interval: std::time::Duration::from_secs(1), ..Default::default() };
 
-    Ok(Self { mnds: mdns::tokio::Behaviour::new(mnds_cfg, key.public().to_peer_id())? })
+    let pairing_protocol = request_response::Behaviour::<PairingCodec>::new(
+      vec![("/pairing/1".into(), ProtocolSupport::Full)],
+      Config::default(),
+    );
+
+    Ok(Self { mnds: mdns::tokio::Behaviour::new(mnds_cfg, key.public().to_peer_id())?, pairing: pairing_protocol })
   }
 }
 
@@ -35,17 +44,16 @@ pub struct NetworkManager {}
 impl NetworkManager {
   pub async fn new(daemon: SharedDaemon) -> Result<Arc<Mutex<Self>>, Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
-    let (p_sender, mut p_receiver) =
-      tokio::sync::mpsc::channel(100);
+    let (p_sender, mut p_receiver) = tokio::sync::mpsc::channel(100);
 
     debug!("Initializing new swarm");
 
     let mut swarm = SwarmBuilder::with_new_identity()
-        .with_tokio()
-        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
-        .with_quic()
-        .with_behaviour(|key| MulticonnectBehavior::new(key).unwrap())?
-        .build();
+      .with_tokio()
+      .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
+      .with_quic()
+      .with_behaviour(|key| MulticonnectBehavior::new(key).unwrap())?
+      .build();
 
     let mut bound = false;
     for port in 1590..=1600 {
@@ -62,10 +70,9 @@ impl NetworkManager {
       return Err("Failed to bind to any port in the range 1590-1600".into());
     }
 
-
+    let mut keystore = KeyStore::new();
     let p2p_task = tokio::spawn(async move {
       loop {
-        info!("Looping");
         tokio::select! {
           event = swarm.select_next_some() => match event {
             SwarmEvent::NewListenAddr { address, ..} => {
@@ -74,13 +81,38 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+                let req = PairingRequest;
+                swarm.behaviour_mut().pairing.send_request(&peer_id, req);
                 let peer = Peer { peer_id, multiaddr };
                 info!("Sending peer");
                 let _ = p_sender.send(peer).await;
               }
             }
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Expired(expired))) => {
+              for (peer_id, multiaddr) in expired {
+                info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+                let peer = Peer { peer_id, multiaddr };
+                let _ = p_sender.send(peer).await;
+              }
+            }
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
+              match message {
+                request_response::Message::Request { request_id, request, channel } => {
+                  let accepted = true;
+                  let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
+
+                  if accepted {
+                    info!("Peer paired successfully!");
+                    keystore.store_key(peer, Keypair::generate_ed25519());
+                  }
+                },
+                request_response::Message::Response { request_id, response } => {
+                  info!("Received paring response: id = {}, accepted = {}", request_id, response.0);
+                },
+              }
+            }
             _ => {
-              info!("Event: {:?}", event);
+              trace!("Event: {:?}", event);
             }
           }
         }
@@ -88,8 +120,15 @@ impl NetworkManager {
     });
 
     let daemon_task = tokio::spawn(async move {
+      let mut peers: Vec<PeerId> = Vec::new();
       while let Some(peer) = p_receiver.recv().await {
-        daemon.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
+        if let Some(i) = peers.iter().position(|p| p == &peer.peer_id) {
+          peers.remove(i);
+        } else {
+          let clone = peer.peer_id.clone();
+          peers.push(clone);
+          daemon.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
+        }
       }
     });
 

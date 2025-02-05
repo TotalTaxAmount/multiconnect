@@ -39,7 +39,8 @@ pub mod peer {
 
   impl PeerFound {
     pub fn new(peer: Peer) -> Self {
-      Self { id: Packet::create_id(), peer: bincode::serialize(&peer).unwrap() } // FIXME: Unsafe
+      Self { id: Packet::create_id(), peer: bincode::serialize(&peer).unwrap() }
+      // FIXME: Unsafe
     }
   }
 
@@ -48,7 +49,7 @@ pub mod peer {
     #[prost(uint32, tag = "1")]
     pub id: u32,
     #[prost(bytes, tag = "2")]
-    pub peer_id: Vec<u8>
+    pub peer_id: Vec<u8>,
   }
 
   #[derive(Clone, PartialEq, prost::Message)]

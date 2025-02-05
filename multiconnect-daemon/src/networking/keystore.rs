@@ -1,4 +1,11 @@
-use std::{collections::HashMap, ffi::OsStr, fs::{File, OpenOptions}, io::{Read, Write}, path::PathBuf, str::FromStr};
+use std::{
+  collections::HashMap,
+  ffi::OsStr,
+  fs::{File, OpenOptions},
+  io::{Read, Write},
+  path::PathBuf,
+  str::FromStr,
+};
 
 use libp2p::{identity::Keypair, PeerId};
 
@@ -10,9 +17,7 @@ pub struct KeyStore {
 
 impl KeyStore {
   pub fn new() -> Self {
-    Self { 
-      keys: Self::load_keys(),
-    }
+    Self { keys: Self::load_keys() }
   }
 
   fn load_keys() -> HashMap<PeerId, Keypair> {
@@ -20,7 +25,7 @@ impl KeyStore {
     if !keyfile.exists() {
       return HashMap::new();
     }
-    
+
     let mut file = File::open(keyfile).unwrap();
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).unwrap();
@@ -39,15 +44,10 @@ impl KeyStore {
 
   fn save_keys(&self) {
     let keyfile = CONFIG.get_config_dir().join("saved");
-    let mut file = OpenOptions::new()
-      .create(true)
-      .write(true)
-      .truncate(true)
-      .open(keyfile)
-      .unwrap();
+    let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(keyfile).unwrap();
 
     let mut keys_to_save = HashMap::new();
-    
+
     for (peer_id, keypair) in &self.keys {
       let peer_id_string = peer_id.to_string();
       let key_bytes = keypair.to_protobuf_encoding().unwrap();
@@ -72,5 +72,4 @@ impl KeyStore {
     self.save_keys();
     key
   }
-
 }
