@@ -1,10 +1,13 @@
 # TODO
 
 ## All
+- Write docs
 
+## Protocol
+- Pairing
 
 ## Desktop
-- Daemonize backed stuff
+- 
 
 
 ## Android 
