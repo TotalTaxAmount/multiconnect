@@ -18,6 +18,7 @@
       cargo
       nodejs_23
       yarn
+      protobuf_27
 
       # Tauri
       cargo-tauri

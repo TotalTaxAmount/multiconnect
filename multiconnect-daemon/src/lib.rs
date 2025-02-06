@@ -4,7 +4,7 @@ pub mod networking;
 use std::{collections::VecDeque, error::Error, pin::Pin, sync::Arc};
 
 use log::{debug, error, info, trace};
-use multiconnect_protocol::{daemon::Acknowledge, Packet};
+use multiconnect_protocol::{Packet};
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},

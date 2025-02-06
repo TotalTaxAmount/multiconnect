@@ -5,7 +5,7 @@ use std::{
 };
 
 use log::{debug, error, info, warn};
-use multiconnect_protocol::{daemon::peer::PeerFound, p2p::Peer, Packet};
+use multiconnect_protocol::{peer::PeerFound, Peer, Packet};
 use serde::{Deserialize, Serialize};
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},

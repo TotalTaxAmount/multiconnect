@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use daemon::{Daemon, DaemonController};
 use log::info;
-use multiconnect_protocol::{p2p::Peer, Packet};
+use multiconnect_protocol::{Peer, Packet};
 use tauri::State;
 use tokio::sync::Mutex;
 

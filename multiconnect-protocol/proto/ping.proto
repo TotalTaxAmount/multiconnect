@@ -1,0 +1,6 @@
+syntax = "proto3";
+package multiconnect;
+
+message Ping {
+  uint32 id = 1;
+}

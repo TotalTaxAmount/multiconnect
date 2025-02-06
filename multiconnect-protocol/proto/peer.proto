@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package multiconnect.peer;
+
+message PeerFound {
+  uint32 id = 1;
+  bytes peer = 2;
+}
+
+message PeerPairRequest {
+  uint32 id = 1;
+}
+
+message PeerPairResponse {
+  uint32 id = 1;
+  bool accepted = 2;
+}
+
+message PeerConnect {
+  uint32 id = 1;
+}

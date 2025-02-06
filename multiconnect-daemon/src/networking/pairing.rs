@@ -3,15 +3,10 @@ use libp2p::{
   futures::{io, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
   request_response,
 };
+use multiconnect_protocol::peer::{PeerPairRequest, PeerPairResponse};
 
 #[derive(Clone, Default)]
 pub(crate) struct PairingCodec;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PairingRequest;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PairingResponse(pub bool);
 
 #[async_trait]
 impl request_response::Codec for PairingCodec {
@@ -19,10 +14,10 @@ impl request_response::Codec for PairingCodec {
   type Protocol = String;
 
   #[doc = " The type of inbound and outbound requests."]
-  type Request = PairingRequest;
+  type Request = PeerPairRequest;
 
   #[doc = " The type of inbound and outbound responses."]
-  type Response = PairingResponse;
+  type Response = PeerPairResponse;
 
   #[doc = " Reads a request from the given I/O stream according to the"]
   #[doc = " negotiated protocol."]
@@ -34,7 +29,7 @@ impl request_response::Codec for PairingCodec {
   ) -> io::Result<Self::Request> {
     let mut buf = [0u8; 1];
     io.read_exact(&mut buf).await?;
-    Ok(PairingRequest)
+    Ok(PeerPairRequest::new())
   }
 
   #[doc = " Reads a response from the given I/O stream according to the"]
@@ -47,7 +42,8 @@ impl request_response::Codec for PairingCodec {
   ) -> io::Result<Self::Response> {
     let mut buf = [0u8; 1];
     io.read_exact(&mut buf).await?;
-    Ok(PairingResponse(buf[0] != 0))
+    // Ok(PairingResponse(buf[0] != 0))
+    Ok(PeerPairResponse::new(buf[0] != 0))
   }
 
   #[doc = " Writes a request to the given I/O stream according to the"]
@@ -72,7 +68,7 @@ impl request_response::Codec for PairingCodec {
     io: &mut T,
     res: Self::Response,
   ) -> io::Result<()> {
-    io.write_all(&[res.0 as u8]).await?;
+    io.write_all(&[res.accepted as u8]).await?;
     io.flush().await
   }
 }

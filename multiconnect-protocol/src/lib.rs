@@ -1,15 +1,19 @@
-pub mod daemon;
-pub mod p2p;
+pub mod impls;
 
-use daemon::{
-  peer::{PeerFound, PeerPairRequest, PeerPairResponse},
-  *,
-};
-use libp2p::core::peer_record;
+use generated::multiconnect::{*, peer::*, transfer::*, sms::*};
+
 use log::{debug, error, trace};
 use prost::Message;
 use thiserror::Error;
 use uid::IdU32;
+use libp2p::{Multiaddr, PeerId};
+
+
+pub mod generated {
+  include!(concat!(env!("OUT_DIR"), "/proto.rs"));
+}
+
+pub use generated::multiconnect::*;
 
 #[derive(Debug, Clone, Error)]
 pub enum PacketError {
@@ -20,20 +24,25 @@ pub enum PacketError {
   #[error("Failed to encode packet")]
   EncodeError,
 }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+pub struct Peer {
+  pub peer_id: PeerId,
+  pub multiaddr: Multiaddr,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
   Ping(Ping),
   Acknowledge(Acknowledge),
-  PeerFound(peer::PeerFound),
-  PeerPairRequest(peer::PeerPairRequest),
-  PeerPairResponse(peer::PeerPairResponse),
-  TransferStart(transfer::TransferStart),
-  TransferChunk(transfer::TransferChunk),
-  TransferEnd(transfer::TransferEnd),
-  TransferStatus(transfer::TransferStatus),
+  PeerFound(PeerFound),
+  PeerPairRequest(PeerPairRequest),
+  PeerPairResponse(PeerPairResponse),
+  TransferStart(TransferStart),
+  TransferChunk(TransferChunk),
+  TransferEnd(TransferEnd),
+  TransferStatus(TransferStatus),
   SmsMessage(SmsMessage),
-  Notify(Notify),
+  Notify(Notification),
 }
 
 impl Packet {

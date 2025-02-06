@@ -1,9 +1,9 @@
-mod keystore;
+mod store;
 mod pairing;
 
 use std::{error::Error, hash::Hash, rc::Rc, sync::Arc};
 
-use keystore::KeyStore;
+use store::Store;
 use libp2p::{
   futures::{lock, StreamExt},
   identity::{self, Keypair},
@@ -13,8 +13,8 @@ use libp2p::{
   tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use log::{debug, error, info, trace};
-use multiconnect_protocol::{daemon::peer::PeerFound, p2p::Peer, Packet};
-use pairing::{PairingCodec, PairingRequest, PairingResponse};
+use multiconnect_protocol::{peer::{PeerFound, PeerPairRequest}, Peer, Packet};
+use pairing::PairingCodec;
 use tokio::{select, sync::Mutex};
 use tracing_subscriber::EnvFilter;
 
@@ -70,7 +70,6 @@ impl NetworkManager {
       return Err("Failed to bind to any port in the range 1590-1600".into());
     }
 
-    let mut keystore = KeyStore::new();
     let p2p_task = tokio::spawn(async move {
       loop {
         tokio::select! {
@@ -81,33 +80,34 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                let req = PairingRequest;
+                let req = PeerPairRequest::new();
                 swarm.behaviour_mut().pairing.send_request(&peer_id, req);
                 let peer = Peer { peer_id, multiaddr };
                 info!("Sending peer");
-                let _ = p_sender.send(peer).await;
+                let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Expired(expired))) => {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr };
-                let _ = p_sender.send(peer).await;
+                // let _ = p_sender.send(Packet::PeerFound(Peer::new(peer))).await; // TODO: Expire peers
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
               match message {
                 request_response::Message::Request { request_id, request, channel } => {
-                  let accepted = true;
-                  let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
+                  p_sender.send(Packet::PeerPairRequest(request)).await;
+                  // let accepted = true;
+                  // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
 
-                  if accepted {
-                    info!("Peer paired successfully!");
-                    keystore.store_key(peer, Keypair::generate_ed25519());
-                  }
+                  // if accepted {
+                  //   info!("Peer paired successfully!");
+                  // }
+                  
                 },
                 request_response::Message::Response { request_id, response } => {
-                  info!("Received paring response: id = {}, accepted = {}", request_id, response.0);
+                  info!("Received paring response: id = {}, res = {:?}", request_id, response);
                 },
               }
             }
@@ -119,16 +119,9 @@ impl NetworkManager {
       }
     });
 
-    let daemon_task = tokio::spawn(async move {
-      let mut peers: Vec<PeerId> = Vec::new();
-      while let Some(peer) = p_receiver.recv().await {
-        if let Some(i) = peers.iter().position(|p| p == &peer.peer_id) {
-          peers.remove(i);
-        } else {
-          let clone = peer.peer_id.clone();
-          peers.push(clone);
-          daemon.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
-        }
+    let daemon_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+      while let Some(packet) = p_receiver.recv().await {
+        daemon.add_to_queue(packet).await;
       }
     });
 
