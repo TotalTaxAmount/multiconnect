@@ -5,6 +5,9 @@ on:
     paths:
       - 'multiconnect-daemon/**'
       - 'multiconnect-frontend/**'
+      - 'multiconnect-protocol/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
 
 jobs:
   build-daemon:
