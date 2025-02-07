@@ -3,5 +3,5 @@
 
 #[tokio::main]
 async fn main() {
-  multiconnect_lib::run().await
+  multiconnect_lib::run()
 }

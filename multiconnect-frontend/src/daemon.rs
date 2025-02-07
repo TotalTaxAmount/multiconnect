@@ -15,9 +15,10 @@ use tokio::{
 };
 
 type Queue = Arc<(Notify, Mutex<VecDeque<Packet>>)>;
-type SharedDaemon = Arc<Mutex<Daemon>>;
+pub type SharedDaemon = Arc<Mutex<Daemon>>;
 const PORT: u16 = 10999;
 
+#[derive(Debug)]
 pub struct Daemon {
   queue: Queue,
   packet_rx: mpsc::Receiver<Packet>,
@@ -70,24 +71,6 @@ impl Daemon {
                     error!("Error sending packet (local): {}", e);
                   }
 
-                  // let mut locked = read_queue_clone.lock().await;
-                  // match packet {
-                  //   Packet::Acknowledge(acknowledge) => {
-                  //     debug!("Received ack for ping req {}",
-                  // acknowledge.req_id);   }
-                  //   Packet::PeerFound(peer_found) => todo!(),
-                  //   Packet::PeerPairRequest(peer_pair_request) => todo!(),
-                  //   Packet::PeerConnect(peer_connect) => todo!(),
-                  //   Packet::TransferStart(transfer_start) => todo!(),
-                  //   Packet::TransferChunk(transfer_chunk) => todo!(),
-                  //   Packet::TransferEnd(transfer_end) => todo!(),
-                  //   Packet::TransferStatus(transfer_status) => todo!(),
-                  //   Packet::SmsMessage(sms_message) => todo!(),
-                  //   Packet::Notify(notify) => todo!(),
-                  //   _ => {
-                  //     error!("Received unexpected packet")
-                  //   }
-                  // };
                 }
                 Err(e) => {
                   error!("Read error: {}", e);
@@ -138,37 +121,5 @@ impl Daemon {
 
   pub async fn on_packet(&mut self) -> Option<Packet> {
     self.packet_rx.recv().await
-  }
-}
-
-pub struct DaemonController {
-  peers: Arc<Mutex<HashSet<Peer>>>,
-}
-
-impl DaemonController {
-  pub async fn bind(daemon: SharedDaemon) -> Self {
-    let peers = Arc::new(Mutex::new(HashSet::new()));
-    let peers_clone = Arc::clone(&peers);
-
-    tokio::spawn(async move {
-      let mut daemon_lock = daemon.lock().await;
-      loop {
-        match daemon_lock.on_packet().await {
-          Some(Packet::PeerFound(p)) => {
-            peers_clone.lock().await.insert(bincode::deserialize(&p.peer).unwrap());
-          }
-          Some(_) | None => {
-            warn!("Received a packet but it is None");
-          }
-        }
-      }
-    });
-
-    Self { peers }
-  }
-
-  pub async fn get_peers(&self) -> Vec<Peer> {
-    let locked = self.peers.lock().await;
-    locked.clone().into_iter().collect()
   }
 }

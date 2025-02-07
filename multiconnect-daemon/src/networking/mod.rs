@@ -81,7 +81,6 @@ impl NetworkManager {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let req = PeerPairRequest::new();
-                swarm.behaviour_mut().pairing.send_request(&peer_id, req);
                 let peer = Peer { peer_id, multiaddr };
                 info!("Sending peer");
                 let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
@@ -97,7 +96,7 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
               match message {
                 request_response::Message::Request { request_id, request, channel } => {
-                  p_sender.send(Packet::PeerPairRequest(request)).await;
+                  let _ = p_sender.send(Packet::PeerPairRequest(request)).await;
                   // let accepted = true;
                   // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
 
