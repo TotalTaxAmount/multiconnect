@@ -35,6 +35,7 @@ pub enum Packet {
   Ping(Ping),
   Acknowledge(Acknowledge),
   PeerFound(PeerFound),
+  PeerExpired(PeerExpired),
   PeerPairRequest(PeerPairRequest),
   PeerPairResponse(PeerPairResponse),
   TransferStart(TransferStart),
@@ -67,12 +68,16 @@ impl Packet {
         buf.push(2);
         peer_found.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
       }
-      Packet::PeerPairRequest(peer_pair_request) => {
+      Packet::PeerExpired(peer_expired) => {
         buf.push(3);
+        peer_expired.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
+      }
+      Packet::PeerPairRequest(peer_pair_request) => {
+        buf.push(4);
         peer_pair_request.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
       }
       Packet::PeerPairResponse(peer_pair_response) => {
-        buf.push(4);
+        buf.push(5);
         peer_pair_response.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
       }
       Packet::TransferStart(transfer_start) => todo!(),
@@ -102,8 +107,9 @@ impl Packet {
       0 => Ok(Packet::Ping(Ping::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       1 => Ok(Packet::Acknowledge(Acknowledge::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       2 => Ok(Packet::PeerFound(PeerFound::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
-      3 => Ok(Packet::PeerPairRequest(PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
-      4 => Ok(Packet::PeerPairResponse(PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      3 => Ok(Packet::PeerExpired(PeerExpired::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      4 => Ok(Packet::PeerPairRequest(PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      5 => Ok(Packet::PeerPairResponse(PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       _ => {
         error!("Unknown packet type {}", packet_type);
         Err(PacketError::InvalidPacket("Unknown packet type".into()))

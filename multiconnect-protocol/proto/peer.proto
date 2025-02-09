@@ -2,7 +2,14 @@ syntax = "proto3";
 
 package multiconnect.peer;
 
+// Sent from the daemon to a client when a peer is found
 message PeerFound {
+  uint32 id = 1;
+  bytes peer = 2;
+}
+
+// Send from the daemon to a client when a peer expires
+message PeerExpired {
   uint32 id = 1;
   bytes peer = 2;
 }

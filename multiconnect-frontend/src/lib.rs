@@ -28,7 +28,7 @@ pub fn run() {
     task::block_in_place(|| {
       async_runtime::block_on(async {
         let daemon = Daemon::connect().await.unwrap();
-        let controller = Controller::new(daemon, handle.clone());
+        let controller = Controller::new(daemon, handle.clone()).await;
         app.manage(controller)
       })
     });

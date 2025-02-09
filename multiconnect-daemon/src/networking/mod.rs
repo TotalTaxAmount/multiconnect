@@ -1,7 +1,7 @@
 mod store;
 mod pairing;
 
-use std::{error::Error, hash::Hash, rc::Rc, sync::Arc};
+use std::{error::Error, hash::Hash, rc::Rc, sync::Arc, time::Duration};
 
 use store::Store;
 use libp2p::{
@@ -13,7 +13,7 @@ use libp2p::{
   tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use log::{debug, error, info, trace};
-use multiconnect_protocol::{peer::{PeerFound, PeerPairRequest}, Peer, Packet};
+use multiconnect_protocol::{peer::{PeerExpired, PeerFound, PeerPairRequest}, Packet, Peer};
 use pairing::PairingCodec;
 use tokio::{select, sync::Mutex};
 use tracing_subscriber::EnvFilter;
@@ -28,7 +28,7 @@ struct MulticonnectBehavior {
 
 impl MulticonnectBehavior {
   pub fn new(key: &libp2p::identity::Keypair) -> Result<Self, Box<dyn Error>> {
-    let mnds_cfg = mdns::Config { query_interval: std::time::Duration::from_secs(1), ..Default::default() };
+    let mnds_cfg = mdns::Config { ttl: Duration::from_secs(5), query_interval: std::time::Duration::from_secs(1), ..Default::default() };
 
     let pairing_protocol = request_response::Behaviour::<PairingCodec>::new(
       vec![("/pairing/1".into(), ProtocolSupport::Full)],
@@ -90,7 +90,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr };
-                // let _ = p_sender.send(Packet::PeerFound(Peer::new(peer))).await; // TODO: Expire peers
+                let _ = p_sender.send(Packet::PeerExpired(PeerExpired::new(peer))).await; // TODO: Expire peers
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {

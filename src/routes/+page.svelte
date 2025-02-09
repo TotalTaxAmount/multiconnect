@@ -1,33 +1,21 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
 
   type Peer = { peer_id: string; multiaddr: string };
-  let peers: Peer[] = [];
+  let peers: Map<string, Peer> = new Map<string, Peer>();
   let loading = true;
 
-  function listPeers() {
-    invoke<Peer[]>('list_peers')
-      .then((res: Peer[]) => {
-        peers = res;
-        if (peers.length > 0) {
-          loading = false;
-        }
-      })
-      .catch((e) => {
-        console.error("Failed to fetch peers: ", e);
-      });
-  }
+  listen<Peer>('peer-found', (event) => {
+    peers.set(event.payload.peer_id, event.payload);
+    if (peers.size > 0 ) loading = false;
+  });
 
-  onMount(() => {
-    listPeers();
-    const interval = setInterval(() => {
-      listPeers();
-    }, 3000);
-
-    onDestroy(() => {
-      clearInterval(interval);
-    });
+  listen<Peer>('peer-expired', (event) => {
+    console.log("peer expired");
+    peers.delete(event.payload.peer_id);
+    if (peers.size <= 0) loading = true;
   });
 </script>
 
@@ -39,7 +27,7 @@
         <div class="spinner"></div>
       </li>
     {:else}
-      {#each peers as peer}
+      {#each peers.values() as peer}
         <li>
           <strong>Peer ID:</strong> {peer.peer_id} <br />
           <strong>Multiaddr:</strong> {peer.multiaddr}

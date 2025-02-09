@@ -1,5 +1,6 @@
 use crate::{*, sms::*, transfer::*, peer::*};
 
+// TODO: Maybe use traits here?
 impl Ping {
   pub fn new() -> Self {
     Self { id: Packet::create_id() }
@@ -13,6 +14,12 @@ impl Acknowledge {
 }
 
 impl PeerFound {
+  pub fn new(peer: Peer) -> Self {
+    Self { id: Packet::create_id(), peer: bincode::serialize(&peer).unwrap() }
+  }
+}
+
+impl PeerExpired {
   pub fn new(peer: Peer) -> Self {
     Self { id: Packet::create_id(), peer: bincode::serialize(&peer).unwrap() }
   }
