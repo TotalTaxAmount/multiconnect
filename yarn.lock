@@ -636,10 +636,10 @@ svelte-check@^4.1.4:
     picocolors "^1.0.0"
     sade "^1.7.4"
 
-svelte@^5.19.7:
-  version "5.19.7"
-  resolved "https://registry.yarnpkg.com/svelte/-/svelte-5.19.7.tgz#4f3c32d0e6ef8c737f6951d786b502671e440559"
-  integrity sha512-I0UUp2MpB5gF8aqHJVklOcRcoLgQNnBolSwLMMqDepE9gVwmGeYBmJp1/obzae72QpxdPIymA4AunIm2x70LBg==
+svelte@^5.19.9:
+  version "5.19.9"
+  resolved "https://registry.yarnpkg.com/svelte/-/svelte-5.19.9.tgz#ab29aafe43a512a4ceb517c4f7e2ed4f972c87cc"
+  integrity sha512-860s752/ZZxHIsii31ELkdKBOCeAuDsfb/AGUXJyQyzUVLRSt4oqEw/BV5+2+mNg8mbqmD3OK+vMvwWMPM6f8A==
   dependencies:
     "@ampproject/remapping" "^2.3.0"
     "@jridgewell/sourcemap-codec" "^1.5.0"
