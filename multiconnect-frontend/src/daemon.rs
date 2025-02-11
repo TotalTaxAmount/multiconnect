@@ -5,7 +5,7 @@ use std::{
 };
 
 use log::{debug, error, info, warn};
-use multiconnect_protocol::{peer::PeerFound, Peer, Packet};
+use multiconnect_protocol::{peer::PeerFound, Packet, Peer};
 use serde::{Deserialize, Serialize};
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
@@ -70,7 +70,6 @@ impl Daemon {
                   if let Err(e) = packet_tx.send(packet).await {
                     error!("Error sending packet (local): {}", e);
                   }
-
                 }
                 Err(e) => {
                   error!("Read error: {}", e);

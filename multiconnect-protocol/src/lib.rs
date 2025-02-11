@@ -1,13 +1,12 @@
 pub mod impls;
 
-use generated::multiconnect::{*, peer::*, transfer::*, sms::*};
+use generated::multiconnect::{peer::*, sms::*, transfer::*, *};
 
+use libp2p::{Multiaddr, PeerId};
 use log::{debug, error, trace};
 use prost::Message;
 use thiserror::Error;
 use uid::IdU32;
-use libp2p::{Multiaddr, PeerId};
-
 
 pub mod generated {
   include!(concat!(env!("OUT_DIR"), "/proto.rs"));
@@ -28,6 +27,13 @@ pub enum PacketError {
 pub struct Peer {
   pub peer_id: PeerId,
   pub multiaddr: Multiaddr,
+}
+
+impl Peer {
+  // TODO: Switch everything to this
+  fn new(peer_id: PeerId, multiaddr: Multiaddr) -> Self {
+    Self { peer_id, multiaddr }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,14 +97,14 @@ impl Packet {
       return Err(PacketError::InvalidPacket("Packet is too big".into()));
     }
 
-    let len = buf.len() as u16;
-    let mut send_buf = Vec::with_capacity((2 + len).into());
-    send_buf.extend_from_slice(&len.to_be_bytes());
-    send_buf.extend_from_slice(&buf);
+    // let len = buf.len() as u16;
+    // let mut send_buf = Vec::with_capacity((2 + len).into());
+    // send_buf.extend_from_slice(&len.to_be_bytes());
+    // send_buf.extend_from_slice(&buf);
 
-    trace!("Real len: {}", len);
-    trace!("Raw bytes: {:?}", send_buf);
-    Ok(send_buf)
+    // trace!("Real len: {}", len);
+    // trace!("Raw bytes: {:?}", send_buf);
+    Ok(buf)
   }
 
   pub fn from_bytes(bytes: &[u8]) -> Result<Packet, PacketError> {

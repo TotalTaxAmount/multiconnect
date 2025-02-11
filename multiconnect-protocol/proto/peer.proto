@@ -16,6 +16,7 @@ message PeerExpired {
 
 message PeerPairRequest {
   uint32 id = 1;
+  bytes peer = 2;
 }
 
 message PeerPairResponse {

@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { onMount, onDestroy } from "svelte";
 
   type Peer = { peer_id: string; multiaddr: string };
   let peers: Map<string, Peer> = new Map<string, Peer>();
   let loading = true;
+  let pairingRequest: Peer | null = null;
 
   listen<Peer>('peer-found', (event) => {
     peers.set(event.payload.peer_id, event.payload);
@@ -17,6 +16,26 @@
     peers.delete(event.payload.peer_id);
     if (peers.size <= 0) loading = true;
   });
+
+  listen<Peer>('peer-pair', (event) => {
+    pairingRequest = event.payload;
+  });
+
+  function closePopup() {
+    pairingRequest = null;
+  }
+
+  function acceptPair() {
+    // TODO
+    console.log(`Pairing with ${pairingRequest?.peer_id}`);
+    closePopup();
+  }
+
+  function rejectPair() {
+    // TODO
+    console.log(`Rejected pair rq from ${pairingRequest?.peer_id}`);
+    closePopup();
+  }
 </script>
 
 <main class="container">
@@ -35,6 +54,18 @@
       {/each}
     {/if}
   </ul>
+
+  {#if pairingRequest}
+    <div class="popup">
+      <div class="popup-content">
+        <h2>Pairing Request</h2>
+        <p><strong>Peer ID:</strong> {pairingRequest.peer_id}</p>
+        <p><strong>Multiaddr:</strong> {pairingRequest.multiaddr}</p>
+        <button on:click={acceptPair}>Accept</button>
+        <button on:click={rejectPair} class="reject">Reject</button>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -81,6 +112,42 @@
     border-top: 5px solid #333;
     border-radius: 50%;
     animation: spin 1s linear infinite;
+  }
+
+  .popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .popup-content {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+  }
+
+  .popup button {
+    margin: 10px;
+    padding: 10px 20px;
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  .popup .reject {
+    background: #ff4d4d;
+    color: white;
+    border: none;
+  }
+
+  .popup .reject:hover {
+    background: #cc0000;
   }
 
   @keyframes spin {

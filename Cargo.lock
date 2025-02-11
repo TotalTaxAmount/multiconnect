@@ -3357,6 +3357,7 @@ dependencies = [
  "log",
  "multiconnect-protocol",
  "pretty_env_logger",
+ "prost",
  "serde",
  "tokio",
  "tracing-subscriber",

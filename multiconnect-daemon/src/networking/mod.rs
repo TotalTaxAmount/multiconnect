@@ -1,9 +1,8 @@
-mod store;
 mod pairing;
+mod store;
 
 use std::{error::Error, hash::Hash, rc::Rc, sync::Arc, time::Duration};
 
-use store::Store;
 use libp2p::{
   futures::{lock, StreamExt},
   identity::{self, Keypair},
@@ -13,8 +12,12 @@ use libp2p::{
   tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use log::{debug, error, info, trace};
-use multiconnect_protocol::{peer::{PeerExpired, PeerFound, PeerPairRequest}, Packet, Peer};
+use multiconnect_protocol::{
+  peer::{PeerExpired, PeerFound, PeerPairRequest},
+  Packet, Peer,
+};
 use pairing::PairingCodec;
+use store::Store;
 use tokio::{select, sync::Mutex};
 use tracing_subscriber::EnvFilter;
 
@@ -28,7 +31,11 @@ struct MulticonnectBehavior {
 
 impl MulticonnectBehavior {
   pub fn new(key: &libp2p::identity::Keypair) -> Result<Self, Box<dyn Error>> {
-    let mnds_cfg = mdns::Config { ttl: Duration::from_secs(5), query_interval: std::time::Duration::from_secs(1), ..Default::default() };
+    let mnds_cfg = mdns::Config {
+      ttl: Duration::from_secs(5),
+      query_interval: std::time::Duration::from_secs(1),
+      ..Default::default()
+    };
 
     let pairing_protocol = request_response::Behaviour::<PairingCodec>::new(
       vec![("/pairing/1".into(), ProtocolSupport::Full)],
@@ -80,9 +87,7 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                let req = PeerPairRequest::new();
                 let peer = Peer { peer_id, multiaddr };
-                info!("Sending peer");
                 let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
               }
             }
@@ -103,7 +108,7 @@ impl NetworkManager {
                   // if accepted {
                   //   info!("Peer paired successfully!");
                   // }
-                  
+
                 },
                 request_response::Message::Response { request_id, response } => {
                   info!("Received paring response: id = {}, res = {:?}", request_id, response);

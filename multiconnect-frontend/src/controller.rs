@@ -1,5 +1,5 @@
 use log::warn;
-use multiconnect_protocol::{Packet, Peer};
+use multiconnect_protocol::{impls::PeerPacket, Packet, Peer};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -18,10 +18,13 @@ impl Controller {
         let mut locked = daemon_clone.lock().await;
         match locked.on_packet().await {
           Some(Packet::PeerFound(packet)) => {
-            let _ = app.emit("peer-found", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+            let _ = app.emit("peer-found", packet.deserialize_peer().unwrap());
           }
           Some(Packet::PeerExpired(packet)) => {
-            let _ = app.emit("peer-expired", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+            let _ = app.emit("peer-expired", packet.deserialize_peer().unwrap());
+          }
+          Some(Packet::PeerPairRequest(packet)) => {
+            let _ = app.emit("pair-request", packet.deserialize_peer().unwrap());
           }
           Some(_) | None => {}
         }

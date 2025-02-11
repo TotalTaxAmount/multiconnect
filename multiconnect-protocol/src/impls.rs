@@ -1,5 +1,8 @@
-use crate::{*, sms::*, transfer::*, peer::*};
+use crate::{peer::*, sms::*, transfer::*, *};
 
+pub trait PeerPacket {
+  fn deserialize_peer(&self) -> Result<Peer, PacketError>;
+}
 // TODO: Maybe use traits here?
 impl Ping {
   pub fn new() -> Self {
@@ -26,15 +29,31 @@ impl PeerExpired {
 }
 
 impl PeerPairRequest {
-  pub fn new() -> Self {
-    Self {
-      id: Packet::create_id(),
-    }
+  pub fn new(peer: Peer) -> Self {
+    Self { id: Packet::create_id(), peer: bincode::serialize(&peer).unwrap() }
   }
 }
 
 impl PeerPairResponse {
   pub fn new(accepted: bool) -> Self {
     Self { id: Packet::create_id(), accepted }
+  }
+}
+
+impl PeerPacket for PeerPairRequest {
+  fn deserialize_peer(&self) -> Result<Peer, PacketError> {
+    Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_| PacketError::MalformedPacket)?)
+  }
+}
+
+impl PeerPacket for PeerFound {
+  fn deserialize_peer(&self) -> Result<Peer, PacketError> {
+    Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_| PacketError::MalformedPacket)?)
+  }
+}
+
+impl PeerPacket for PeerExpired {
+  fn deserialize_peer(&self) -> Result<Peer, PacketError> {
+    Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_| PacketError::MalformedPacket)?)
   }
 }
