@@ -1,7 +1,7 @@
 pub mod config;
 pub mod networking;
 
-use std::{collections::VecDeque, error::Error, pin::Pin, sync::Arc};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use log::{debug, error, info, trace};
 use multiconnect_protocol::Packet;
@@ -9,6 +9,7 @@ use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
   sync::{mpsc, watch, Mutex, Notify},
+  time,
 };
 
 pub type SharedDaemon = Arc<Daemon>;
@@ -20,13 +21,13 @@ const PORT: u16 = 10999;
 pub struct Daemon {
   listener: TcpListener,
   queue: Queue,
-  // notify: Arc<Notify>,
   packet_tx: mpsc::Sender<Packet>,
   packet_rx: mpsc::Receiver<Packet>,
 }
 
 // TODO: Clean all this up
 impl Daemon {
+  /// Create a new daemon and bind too a port (`MC_PORT` env var)
   pub async fn new() -> Result<SharedDaemon, std::io::Error> {
     let port = std::env::var("MC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(PORT);
 
@@ -43,26 +44,40 @@ impl Daemon {
     let (packet_tx, packet_rx) = mpsc::channel(100);
 
     let queue: Queue = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
-
     let daemon = Arc::new(Self { listener, queue, packet_tx, packet_rx });
 
-    // let clone = Arc::clone(&daemon);
-    // let _  = tokio::spawn(async move {clone.start().await });
     Ok(daemon)
   }
 
+  /// Start accepting and handling incoming connections
   pub async fn start(&self) {
-    while let Ok((stream, addr)) = self.listener.accept().await {
-      info!("New connection from {}", addr);
-      let packet_tx_clone = self.packet_tx.clone();
-      let queue_clone = Arc::clone(&self.queue);
+    loop {
+      match self.listener.accept().await {
+        Ok((stream, addr)) => {
+          info!("New connection from {}", addr);
+          let packet_tx_clone = self.packet_tx.clone();
+          let queue_clone = Arc::clone(&self.queue);
 
-      tokio::spawn(async move { Self::handle(stream, packet_tx_clone, queue_clone).await });
+          tokio::spawn(async move { Self::handle(stream, packet_tx_clone, queue_clone).await });
+        }
+        Err(e) => {
+          error!("Failed to accept connection: {}", e);
+          time::sleep(Duration::from_secs(1)).await;
+        }
+      }
     }
-
-    // Ok(())
   }
 
+  /// Handle a connection from a client
+  /// Currently the same queue is used for every client, but it is indented to
+  /// be used with one client so it is fine for now
+  /// Arguments:
+  /// * `stream` - The [`TcpStream`]
+  /// * `packet_tx` - A [`mspc::Sender<Packet>`], received packets are send on
+  ///   this channel
+  /// * `queue` - A [`Queue`] of the packets to be sent, all future packets to
+  ///   be sent should be added to this queue
+  // TODO: Possibly use self in the future
   async fn handle(stream: TcpStream, packet_tx: mpsc::Sender<Packet>, queue: Queue) {
     let (mut read_half, mut write_half) = stream.into_split();
 
@@ -98,7 +113,7 @@ impl Daemon {
                     debug!("Received {:?} packet", packet);
 
                     if let Err(e) = packet_tx.send(packet).await {
-                      error!("Failed to add sene packet (local): {}", e);
+                      error!("Failed to add send packet (local): {}", e);
                     };
                   }
                   Err(e) => {
@@ -109,6 +124,7 @@ impl Daemon {
               }
               Err(_) => {
                   info!("Connection closed by peer");
+                  let _ = shutdown_tx.send(());
                   break;
                 }
               }
@@ -118,7 +134,6 @@ impl Daemon {
             }
           }
         }
-        let _ = shutdown_tx.send(());
       }
     });
 
@@ -127,6 +142,7 @@ impl Daemon {
         tokio::select! {
           _ = queue.0.notified() => {
             let mut locked = queue.1.lock().await;
+
             while let Some(packet) = locked.pop_back() {
               debug!("Sending {:?} packet", packet);
               let bytes = Packet::to_bytes(packet);
@@ -153,11 +169,20 @@ impl Daemon {
     let _ = tokio::try_join!(read_task, write_task);
   }
 
+  /// Add a packet to the queue.
+  ///
+  /// Arguments:
+  /// * `packet` - A [`Packet`] to be sent (will be sent to all connected
+  ///   clients)
   pub async fn add_to_queue(&self, packet: Packet) {
-    self.queue.1.lock().await.push_front(packet);
+    {
+      let mut locked = self.queue.1.lock().await;
+      locked.push_front(packet);
+    }
     self.queue.0.notify_one();
   }
 
+  /// Await a packet to be received
   pub async fn on_packet(&mut self) -> Option<Packet> {
     self.packet_rx.recv().await
   }

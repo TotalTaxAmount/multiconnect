@@ -1,10 +1,11 @@
 use std::{
   collections::{HashSet, VecDeque},
+  f32::consts::LN_10,
   ops::Not,
   sync::Arc,
 };
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use multiconnect_protocol::{peer::PeerFound, Packet, Peer};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -53,6 +54,8 @@ impl Daemon {
                 error!("Packet is to big: {}", len);
                 continue;
               }
+
+              trace!("Received packet with len {}", len);
 
               let mut raw: Vec<u8> = vec![0u8; len.into()];
               match read_half.read_exact(&mut raw).await {

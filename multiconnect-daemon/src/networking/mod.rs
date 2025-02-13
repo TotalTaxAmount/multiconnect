@@ -13,11 +13,11 @@ use libp2p::{
 };
 use log::{debug, error, info, trace};
 use multiconnect_protocol::{
+  impls::PeerPacket,
   peer::{PeerExpired, PeerFound, PeerPairRequest},
   Packet, Peer,
 };
 use pairing::PairingCodec;
-use store::Store;
 use tokio::{select, sync::Mutex};
 use tracing_subscriber::EnvFilter;
 
@@ -77,7 +77,7 @@ impl NetworkManager {
       return Err("Failed to bind to any port in the range 1590-1600".into());
     }
 
-    let p2p_task = tokio::spawn(async move {
+    let _ = tokio::spawn(async move {
       loop {
         tokio::select! {
           event = swarm.select_next_some() => match event {
@@ -88,6 +88,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr };
+                let _ = swarm.behaviour_mut().pairing.send_request(&peer_id, PeerPairRequest::new(peer.clone()));
                 let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
               }
             }
@@ -101,6 +102,7 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
               match message {
                 request_response::Message::Request { request_id, request, channel } => {
+                  debug!("Received pairing request from {:?}", request.deserialize_peer().unwrap());
                   let _ = p_sender.send(Packet::PeerPairRequest(request)).await;
                   // let accepted = true;
                   // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
@@ -123,7 +125,7 @@ impl NetworkManager {
       }
     });
 
-    let daemon_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+    let _ = tokio::spawn(async move {
       while let Some(packet) = p_receiver.recv().await {
         daemon.add_to_queue(packet).await;
       }

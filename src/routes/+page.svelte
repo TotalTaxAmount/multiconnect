@@ -18,6 +18,7 @@
   });
 
   listen<Peer>('peer-pair', (event) => {
+    console.log(`New pairing request from: ${pairingRequest?.peer_id}`);
     pairingRequest = event.payload;
   });
 

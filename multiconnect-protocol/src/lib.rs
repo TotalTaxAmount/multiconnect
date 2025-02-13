@@ -97,14 +97,14 @@ impl Packet {
       return Err(PacketError::InvalidPacket("Packet is too big".into()));
     }
 
-    // let len = buf.len() as u16;
-    // let mut send_buf = Vec::with_capacity((2 + len).into());
-    // send_buf.extend_from_slice(&len.to_be_bytes());
-    // send_buf.extend_from_slice(&buf);
+    let len = buf.len() as u16;
+    let mut send_buf = Vec::with_capacity((2 + len).into());
+    send_buf.extend_from_slice(&len.to_be_bytes());
+    send_buf.extend_from_slice(&buf);
 
-    // trace!("Real len: {}", len);
-    // trace!("Raw bytes: {:?}", send_buf);
-    Ok(buf)
+    trace!("Real len: {}", len);
+    trace!("Raw bytes: {:?}", send_buf);
+    Ok(send_buf)
   }
 
   pub fn from_bytes(bytes: &[u8]) -> Result<Packet, PacketError> {
