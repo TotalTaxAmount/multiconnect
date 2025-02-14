@@ -9,7 +9,7 @@
 - Refactor impls and util functions (traits?)
 
 ## Desktop
-- Refactor daemon setup
+- Refactor daemon setup (basically rewrite)
 
 ## Android 
 - Android app

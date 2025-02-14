@@ -7,7 +7,8 @@
     "Multiaddr",
     "multiconnect",
     "prost",
-    "tauri"
+    "tauri",
+    "yamux"
   ],
   "rust-analyzer.cargo.cfgs": [
     "debug_assertion",

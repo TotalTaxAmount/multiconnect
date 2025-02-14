@@ -1,24 +1,18 @@
 mod pairing;
 mod store;
 
-use std::{error::Error, hash::Hash, rc::Rc, sync::Arc, time::Duration};
+use std::{error::Error, sync::Arc, time::Duration};
 
 use libp2p::{
-  futures::{lock, StreamExt},
-  identity::{self, Keypair},
-  mdns, noise,
-  request_response::{self, Config, Event, ProtocolSupport},
-  swarm::{NetworkBehaviour, SwarmEvent},
-  tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
+  futures::StreamExt, mdns, noise, request_response::{self, Config, ProtocolSupport}, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, SwarmBuilder
 };
 use log::{debug, error, info, trace};
 use multiconnect_protocol::{
-  impls::PeerPacket,
   peer::{PeerExpired, PeerFound, PeerPairRequest},
   Packet, Peer,
 };
 use pairing::PairingCodec;
-use tokio::{select, sync::Mutex};
+use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
 use crate::SharedDaemon;
@@ -51,7 +45,6 @@ pub struct NetworkManager {}
 impl NetworkManager {
   pub async fn new(daemon: SharedDaemon) -> Result<Arc<Mutex<Self>>, Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
-    let (p_sender, mut p_receiver) = tokio::sync::mpsc::channel(100);
 
     debug!("Initializing new swarm");
 
@@ -77,6 +70,7 @@ impl NetworkManager {
       return Err("Failed to bind to any port in the range 1590-1600".into());
     }
 
+    let daemon_cloned = daemon.clone();
     let _ = tokio::spawn(async move {
       loop {
         tokio::select! {
@@ -88,22 +82,23 @@ impl NetworkManager {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr };
-                let _ = swarm.behaviour_mut().pairing.send_request(&peer_id, PeerPairRequest::new(peer.clone()));
-                let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
+                daemon.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
+                // let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Expired(expired))) => {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr };
-                let _ = p_sender.send(Packet::PeerExpired(PeerExpired::new(peer))).await; // TODO: Expire peers
+                daemon.add_to_queue(Packet::PeerExpired(PeerExpired::new(peer))).await
+                // let _ = p_sender.send(Packet::PeerExpired(PeerExpired::new(peer))).await;
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
               match message {
-                request_response::Message::Request { request_id, request, channel } => {
-                  debug!("Received pairing request from {:?}", request.deserialize_peer().unwrap());
-                  let _ = p_sender.send(Packet::PeerPairRequest(request)).await;
+                request_response::Message::Request { request_id: _, request, channel: _ } => {
+                  debug!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&request.peer).unwrap());
+                  // let _ = p_sender.send(Packet::PeerPairRequest(request)).await;
                   // let accepted = true;
                   // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
 
@@ -125,12 +120,24 @@ impl NetworkManager {
       }
     });
 
-    let _ = tokio::spawn(async move {
-      while let Some(packet) = p_receiver.recv().await {
-        daemon.add_to_queue(packet).await;
-      }
-    });
+    // let _ = tokio::spawn(async move {
+    //   loop {
+    //     let packet: Option<Packet>;
+    //     {
+    //       let mut locked = daemon_cloned.lock().await;
+    //       packet = locked.on_packet().await;
+    //     }
 
+    //     match packet {
+    //       Some(Packet::PeerPairRequest(packet)) => {
+    //         debug!("Sending pair request");
+    //         let peer = bincode::deserialize::<Peer>(&packet.peer).unwrap();
+    //         // swarm.behaviour_mut().pairing.send_request(&peer.peer_id, packet);
+    //       },
+    //       Some(_) | None => {},
+    //     }
+    //   }
+    // });
     Ok(Arc::new(Mutex::new(Self {})))
   }
 }
