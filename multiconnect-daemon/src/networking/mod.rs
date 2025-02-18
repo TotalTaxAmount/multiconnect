@@ -82,7 +82,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr };
-                daemon.add_to_queue(Packet::PeerFound(PeerFound::new(peer))).await;
+                daemon.send_packet(Packet::PeerFound(PeerFound::new(peer))).await;
                 // let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
               }
             }
@@ -90,7 +90,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr };
-                daemon.add_to_queue(Packet::PeerExpired(PeerExpired::new(peer))).await
+                daemon.send_packet(Packet::PeerExpired(PeerExpired::new(peer))).await
                 // let _ = p_sender.send(Packet::PeerExpired(PeerExpired::new(peer))).await;
               }
             }

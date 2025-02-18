@@ -8,7 +8,7 @@ use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
-  sync::{mpsc, watch, Mutex, Notify},
+  sync::{broadcast, mpsc, watch, Mutex, Notify},
   time,
 };
 
@@ -19,10 +19,18 @@ const PORT: u16 = 10999;
 
 #[derive(Debug)]
 pub struct Daemon {
+  /// The [`TcpListener`] for the daemon
   listener: TcpListener,
-  queue: Queue,
-  packet_tx: mpsc::Sender<Packet>,
-  packet_rx: mpsc::Receiver<Packet>,
+
+  /// Incoming packet sender form clients
+  incoming_tx: mpsc::Sender<Packet>,
+  /// Incoming packet receiver form clients
+  incoming_rx: mpsc::Receiver<Packet>,
+
+  /// Outgoing packet sender to clients
+  outgoing_tx: broadcast::Sender<Packet>,
+  /// Outgoing packet receiver to clients
+  outgoing_rx: broadcast::Receiver<Packet>,
 }
 
 // TODO: Clean all this up
@@ -41,10 +49,11 @@ impl Daemon {
 
     info!("Daemon listening on 127.0.0.1:{}", port);
 
-    let (packet_tx, packet_rx) = mpsc::channel(100);
+    let (incoming_tx, mut incoming_rx) = mpsc::channel(100);
+    let (outgoing_tx, mut outgoing_rx) = broadcast::channel(100);
 
-    let queue: Queue = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
-    let daemon = Arc::new(Self { listener, queue, packet_tx, packet_rx });
+    // let queue: Queue = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
+    let daemon = Arc::new(Self { listener, incoming_tx, incoming_rx, outgoing_tx, outgoing_rx });
 
     Ok(daemon)
   }
@@ -55,10 +64,10 @@ impl Daemon {
       match self.listener.accept().await {
         Ok((stream, addr)) => {
           info!("New connection from {}", addr);
-          let packet_tx_clone = self.packet_tx.clone();
-          let queue_clone = Arc::clone(&self.queue);
+          let incoming_tx = self.incoming_tx.clone();
+          let mut outgoing_rx = self.outgoing_rx.resubscribe();
 
-          tokio::spawn(async move { Self::handle(stream, packet_tx_clone, queue_clone).await });
+          tokio::spawn(async move { Self::handle(stream, incoming_tx, &mut outgoing_rx).await });
         }
         Err(e) => {
           error!("Failed to accept connection: {}", e);
@@ -78,95 +87,73 @@ impl Daemon {
   /// * `queue` - A [`Queue`] of the packets to be sent, all future packets to
   ///   be sent should be added to this queue
   // TODO: Possibly use self in the future
-  async fn handle(stream: TcpStream, packet_tx: mpsc::Sender<Packet>, queue: Queue) {
+  async fn handle(stream: TcpStream, incoming_tx: mpsc::Sender<Packet>, outgoing_rx: &mut broadcast::Receiver<Packet>) {
     let (mut read_half, mut write_half) = stream.into_split();
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
-    let mut shutdown_rx_clone: watch::Receiver<()> = watch::Receiver::clone(&shutdown_rx);
 
-    let read_task = tokio::spawn({
-      let shutdown_tx = shutdown_tx.clone();
-      async move {
-        loop {
-          tokio::select! {
-            result = read_half.read_u16() => {
-              match result {
-                Ok(len) => {
-                  trace!("Len: {}", len);
-                  if len > u16::MAX {
-                    error!("Packet is to big: {}", len);
+    loop {
+      tokio::select! {
+        res = read_half.read_u16() => {
+          match res {
+            Ok(len) => {
+              trace!("Len: {}", len);
+              if len > u16::MAX {
+                error!("Packet is to big: {}", len);
+                continue;
+              }
+
+              let mut raw: Vec<u8> = vec![0u8; len.into()];
+              match read_half.read_exact(&mut raw).await {
+                Ok(_) => {
+                  trace!("Bytes: {:?}", raw);
+                  let packet = match Packet::from_bytes(&raw) {
+                  Ok(p) => p,
+                  Err(e) => {
+                    error!("Error decoding packet {}", e);
                     continue;
                   }
+                };
 
-                  let mut raw: Vec<u8> = vec![0u8; len.into()];
-                  match read_half.read_exact(&mut raw).await {
-                    Ok(_) => {
-                      trace!("Bytes: {:?}", raw);
-                      let packet = match Packet::from_bytes(&raw) {
-                      Ok(p) => p,
-                      Err(e) => {
-                        error!("Error decoding packet {}", e);
-                        continue;
-                      }
-                    };
+                debug!("Received {:?} packet", packet);
 
-                    debug!("Received {:?} packet", packet);
-
-                    if let Err(e) = packet_tx.send(packet).await {
-                      error!("Failed to add send packet (local): {}", e);
-                    };
-                  }
-                  Err(e) => {
-                    error!("Read error: {}", e);
-                    break;
-                  }
-                }
+                if let Err(e) = incoming_tx.send(packet).await {
+                  error!("Failed to add send packet (local): {}", e);
+                };
               }
-              Err(_) => {
-                  info!("Connection closed by peer");
-                  let _ = shutdown_tx.send(());
-                  break;
-                }
+              Err(e) => {
+                error!("Read error: {}", e);
+                break;
               }
             }
-            _ = shutdown_rx_clone.changed() => {
+          }
+          Err(_) => {
+              info!("Connection closed by peer");
+              let _ = shutdown_tx.send(());
               break;
             }
           }
-        }
-      }
-    });
+        } 
 
-    let write_task = tokio::spawn(async move {
-      loop {
-        tokio::select! {
-          _ = queue.0.notified() => {
-            let mut locked = queue.1.lock().await;
-
-            while let Some(packet) = locked.pop_back() {
-              debug!("Sending {:?} packet", packet);
-              let bytes = Packet::to_bytes(packet);
-              match bytes {
-                Ok(b) => {
-                  if let Err(e) = write_half.write_all(&b).await {
-                    error!("Write error: {}", e);
-                    break;
-                  };
-                  let _ = write_half.flush().await;
-                }
-                Err(_) => todo!(),
+        res = outgoing_rx.recv() => {
+          match res {
+            Ok(p) => {
+              let bytes = Packet::to_bytes(p).unwrap();
+              if let Err(e) = write_half.write_all(&bytes).await {
+                error!("Write error: {}", e);
               }
-            }
-          }
-          _ = shutdown_rx.changed() => {
-            info!("Shutting down stream for client");
-            break;
+
+              let _ = write_half.flush().await;
+            },
+            Err(e) => todo!(),
           }
         }
-      }
-    });
 
-    let _ = tokio::try_join!(read_task, write_task);
+        _ = shutdown_rx.changed() => {
+          break;
+        }
+      }
+    }
   }
 
   /// Add a packet to the queue.
@@ -174,16 +161,12 @@ impl Daemon {
   /// Arguments:
   /// * `packet` - A [`Packet`] to be sent (will be sent to all connected
   ///   clients)
-  pub async fn add_to_queue(&self, packet: Packet) {
-    {
-      let mut locked = self.queue.1.lock().await;
-      locked.push_front(packet);
-    }
-    self.queue.0.notify_one();
+  pub async fn send_packet(&self, packet: Packet) {
+    let _ = self.outgoing_tx.send(packet);
   }
 
   /// Await a packet to be received
   pub async fn on_packet(&mut self) -> Option<Packet> {
-    self.packet_rx.recv().await
+    self.incoming_rx.recv().await
   }
 }
