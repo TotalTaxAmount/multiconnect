@@ -8,7 +8,7 @@ use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
-  sync::{broadcast, mpsc, watch, Mutex, Notify},
+  sync::{broadcast::{self, error::RecvError}, mpsc, watch, Mutex, Notify, RwLock},
   time,
 };
 
@@ -23,14 +23,14 @@ pub struct Daemon {
   listener: TcpListener,
 
   /// Incoming packet sender form clients
-  incoming_tx: mpsc::Sender<Packet>,
+  incoming_tx: broadcast::Sender<Packet>,
   /// Incoming packet receiver form clients
-  incoming_rx: mpsc::Receiver<Packet>,
+  incoming_rx: broadcast::Receiver<Packet>,
 
   /// Outgoing packet sender to clients
-  outgoing_tx: broadcast::Sender<Packet>,
+  outgoing_tx: mpsc::Sender<Packet>,
   /// Outgoing packet receiver to clients
-  outgoing_rx: broadcast::Receiver<Packet>,
+  outgoing_rx: Arc<RwLock<mpsc::Receiver<Packet>>>,
 }
 
 // TODO: Clean all this up
@@ -49,11 +49,11 @@ impl Daemon {
 
     info!("Daemon listening on 127.0.0.1:{}", port);
 
-    let (incoming_tx, mut incoming_rx) = mpsc::channel(100);
-    let (outgoing_tx, mut outgoing_rx) = broadcast::channel(100);
+    let (incoming_tx, incoming_rx) = broadcast::channel(100);
+    let (outgoing_tx, outgoing_rx) = mpsc::channel(100);
 
     // let queue: Queue = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
-    let daemon = Arc::new(Self { listener, incoming_tx, incoming_rx, outgoing_tx, outgoing_rx });
+    let daemon = Arc::new(Self { listener, incoming_tx, incoming_rx, outgoing_tx, outgoing_rx: Arc::new(RwLock::new(outgoing_rx)) });
 
     Ok(daemon)
   }
@@ -65,9 +65,9 @@ impl Daemon {
         Ok((stream, addr)) => {
           info!("New connection from {}", addr);
           let incoming_tx = self.incoming_tx.clone();
-          let mut outgoing_rx = self.outgoing_rx.resubscribe();
+          let outgoing_rx = self.outgoing_rx.clone();
 
-          tokio::spawn(async move { Self::handle(stream, incoming_tx, &mut outgoing_rx).await });
+          tokio::spawn(async move { Self::handle(stream, incoming_tx, outgoing_rx).await });
         }
         Err(e) => {
           error!("Failed to accept connection: {}", e);
@@ -87,7 +87,7 @@ impl Daemon {
   /// * `queue` - A [`Queue`] of the packets to be sent, all future packets to
   ///   be sent should be added to this queue
   // TODO: Possibly use self in the future
-  async fn handle(stream: TcpStream, incoming_tx: mpsc::Sender<Packet>, outgoing_rx: &mut broadcast::Receiver<Packet>) {
+  async fn handle(stream: TcpStream, incoming_tx: broadcast::Sender<Packet>, outgoing_rx: Arc<RwLock<mpsc::Receiver<Packet>>>) {
     let (mut read_half, mut write_half) = stream.into_split();
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
@@ -117,7 +117,7 @@ impl Daemon {
 
                 debug!("Received {:?} packet", packet);
 
-                if let Err(e) = incoming_tx.send(packet).await {
+                if let Err(e) = incoming_tx.send(packet) {
                   error!("Failed to add send packet (local): {}", e);
                 };
               }
@@ -135,9 +135,10 @@ impl Daemon {
           }
         } 
 
-        res = outgoing_rx.recv() => {
+        mut w_lock = outgoing_rx.write() => {
+          let res = w_lock.recv().await;
           match res {
-            Ok(p) => {
+            Some(p) => {
               let bytes = Packet::to_bytes(p).unwrap();
               if let Err(e) = write_half.write_all(&bytes).await {
                 error!("Write error: {}", e);
@@ -145,7 +146,7 @@ impl Daemon {
 
               let _ = write_half.flush().await;
             },
-            Err(e) => todo!(),
+            None => todo!(),
           }
         }
 
@@ -166,7 +167,7 @@ impl Daemon {
   }
 
   /// Await a packet to be received
-  pub async fn on_packet(&mut self) -> Option<Packet> {
+  pub async fn on_packet(&mut self) -> Result<Packet, RecvError> {
     self.incoming_rx.recv().await
   }
 }

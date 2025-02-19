@@ -12,7 +12,7 @@ use multiconnect_protocol::{
   Packet, Peer,
 };
 use pairing::PairingCodec;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing_subscriber::EnvFilter;
 
 use crate::SharedDaemon;
@@ -43,7 +43,7 @@ impl MulticonnectBehavior {
 pub struct NetworkManager {}
 
 impl NetworkManager {
-  pub async fn new(daemon: SharedDaemon) -> Result<Arc<Mutex<Self>>, Box<dyn Error>> {
+  pub async fn start(daemon: SharedDaemon) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
     debug!("Initializing new swarm");
@@ -70,7 +70,6 @@ impl NetworkManager {
       return Err("Failed to bind to any port in the range 1590-1600".into());
     }
 
-    let daemon_cloned = daemon.clone();
     let _ = tokio::spawn(async move {
       loop {
         tokio::select! {
@@ -136,9 +135,9 @@ impl NetworkManager {
     //       },
     //       Some(_) | None => {},
     //     }
-    //   }
+    //   }()
     // });
-    Ok(Arc::new(Mutex::new(Self {})))
+    Ok(())
   }
 }
 
