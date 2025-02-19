@@ -94,7 +94,7 @@ impl Daemon {
           let mut locked = queue_clone.1.lock().await;
           while let Some(packet) = locked.pop_back() {
             debug!("Sending {:?} packet", packet);
-            let bytes = Packet::to_bytes(packet);
+            let bytes = Packet::to_bytes(&packet);
             match bytes {
               Ok(b) => {
                 if let Err(e) = write_half.write_all(&b).await {

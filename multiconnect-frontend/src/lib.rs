@@ -18,8 +18,6 @@ pub fn run() {
 
   pretty_env_logger::formatted_timed_builder().parse_env("MULTICONNECT_LOG").format_timestamp_secs().init();
 
-  // let daemon = Daemon::connect().await.unwrap();
-
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .setup(|app| {

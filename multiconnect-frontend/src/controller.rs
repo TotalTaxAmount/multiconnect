@@ -1,4 +1,4 @@
-use multiconnect_protocol::{Packet, Peer};
+use multiconnect_protocol::{Packet, Peer, Ping};
 use tauri::{AppHandle, Emitter};
 
 use crate::daemon::SharedDaemon;

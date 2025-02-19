@@ -13,7 +13,6 @@ use tokio::{
 };
 
 pub type SharedDaemon = Arc<Daemon>;
-type Queue = Arc<(Notify, Mutex<VecDeque<Packet>>)>;
 
 const PORT: u16 = 10999;
 
@@ -30,7 +29,7 @@ pub struct Daemon {
   /// Outgoing packet sender to clients
   outgoing_tx: mpsc::Sender<Packet>,
   /// Outgoing packet receiver to clients
-  outgoing_rx: Arc<RwLock<mpsc::Receiver<Packet>>>,
+  outgoing_rx: Arc<Mutex<mpsc::Receiver<Packet>>>,
 }
 
 // TODO: Clean all this up
@@ -52,8 +51,7 @@ impl Daemon {
     let (incoming_tx, incoming_rx) = broadcast::channel(100);
     let (outgoing_tx, outgoing_rx) = mpsc::channel(100);
 
-    // let queue: Queue = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
-    let daemon = Arc::new(Self { listener, incoming_tx, incoming_rx, outgoing_tx, outgoing_rx: Arc::new(RwLock::new(outgoing_rx)) });
+    let daemon = Arc::new(Self { listener, incoming_tx, incoming_rx, outgoing_tx, outgoing_rx: Arc::new(Mutex::new(outgoing_rx)) });
 
     Ok(daemon)
   }
@@ -80,17 +78,17 @@ impl Daemon {
   /// Handle a connection from a client
   /// Currently the same queue is used for every client, but it is indented to
   /// be used with one client so it is fine for now
-  /// Arguments:
-  /// * `stream` - The [`TcpStream`]
-  /// * `packet_tx` - A [`mspc::Sender<Packet>`], received packets are send on
-  ///   this channel
-  /// * `queue` - A [`Queue`] of the packets to be sent, all future packets to
-  ///   be sent should be added to this queue
+  /// ### Arguments:
+  /// * `stream` - The [`TcpStream`] for the client connect
+  /// * `incoming_tx` - A [`broadcast::Sender<Packet>`]. Packets received from clients are sent on this channel
+  /// * `outgoing_rx` - A [`Arc<Mutex<mpsc::Receiver<Packet>>>`]. Packets that need to be send to the client are received
+  /// on this channel
   // TODO: Possibly use self in the future
-  async fn handle(stream: TcpStream, incoming_tx: broadcast::Sender<Packet>, outgoing_rx: Arc<RwLock<mpsc::Receiver<Packet>>>) {
+  async fn handle(stream: TcpStream, incoming_tx: broadcast::Sender<Packet>, outgoing_rx: Arc<Mutex<mpsc::Receiver<Packet>>>) {
     let (mut read_half, mut write_half) = stream.into_split();
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
+    let mut outgoing_lock = outgoing_rx.lock().await;
 
     loop {
       tokio::select! {
@@ -135,11 +133,12 @@ impl Daemon {
           }
         } 
 
-        mut w_lock = outgoing_rx.write() => {
-          let res = w_lock.recv().await;
+        res = outgoing_lock.recv() => {
           match res {
             Some(p) => {
-              let bytes = Packet::to_bytes(p).unwrap();
+              let bytes = Packet::to_bytes(&p).unwrap();
+              debug!("Sending packet: {:?}", p);
+              debug!("Raw packet: {:?}", bytes);
               if let Err(e) = write_half.write_all(&bytes).await {
                 error!("Write error: {}", e);
               }
@@ -163,7 +162,7 @@ impl Daemon {
   /// * `packet` - A [`Packet`] to be sent (will be sent to all connected
   ///   clients)
   pub async fn send_packet(&self, packet: Packet) {
-    let _ = self.outgoing_tx.send(packet);
+    let _ = self.outgoing_tx.send(packet).await;
   }
 
   /// Await a packet to be received
