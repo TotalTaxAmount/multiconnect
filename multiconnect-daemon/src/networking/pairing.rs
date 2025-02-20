@@ -3,10 +3,8 @@ use libp2p::{
   futures::{io, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
   request_response,
 };
-use multiconnect_protocol::{
-  peer::{PeerPairRequest, PeerPairResponse},
-  Packet,
-};
+use multiconnect_protocol::peer::{PeerPairRequest, PeerPairResponse};
+
 use prost::Message;
 
 #[derive(Clone, Default)]

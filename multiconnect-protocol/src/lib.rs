@@ -23,27 +23,40 @@ pub enum PacketError {
   #[error("Failed to encode packet")]
   EncodeError,
 }
+
+/// Peer struct, will have other field like device type and common name
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub struct Peer {
+  /// The libp2p peer id for the peer
   pub peer_id: PeerId,
+  /// The libp2p address for the peer
   pub multiaddr: Multiaddr,
 }
 
 impl Peer {
-  // TODO: Switch everything to this
+  /// Create a new peer
   fn new(peer_id: PeerId, multiaddr: Multiaddr) -> Self {
     Self { peer_id, multiaddr }
   }
 }
 
+/// All the possible packet types
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
+  /// Ping packet, used to see if the client or daemon is responding
   Ping(Ping),
+  /// Acknowledge pings or other packets
   Acknowledge(Acknowledge),
+  /// Sent when a peer is found by libp2p (daemon -> client)
   PeerFound(PeerFound),
+  /// Sent when a peer expires (daemon -> client)
   PeerExpired(PeerExpired),
+  /// Sent either when a peer requests to pair or when the client wants to
+  /// send pair request (daemon -> client or client -> daemon)
   PeerPairRequest(PeerPairRequest),
+  /// The pairing response from the peer (daemon -> client)
   PeerPairResponse(PeerPairResponse),
+  // TODO
   TransferStart(TransferStart),
   TransferChunk(TransferChunk),
   TransferEnd(TransferEnd),

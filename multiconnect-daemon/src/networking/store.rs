@@ -1,13 +1,10 @@
 use std::{
   collections::HashMap,
-  ffi::OsStr,
   fs::{File, OpenOptions},
   io::{Read, Write},
-  path::PathBuf,
-  str::FromStr,
 };
 
-use libp2p::{identity::Keypair, PeerId};
+use libp2p::PeerId;
 use multiconnect_protocol::Peer;
 
 use crate::config::CONFIG;

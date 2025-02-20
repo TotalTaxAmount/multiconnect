@@ -39,18 +39,18 @@ impl PeerPairResponse {
 
 // impl PeerPacket for PeerPairRequest {
 //   fn deserialize_peer(&self) -> Result<Peer, PacketError> {
-//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_| PacketError::MalformedPacket)?)
-//   }
+//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_|
+// PacketError::MalformedPacket)?)   }
 // }
 
 // impl PeerPacket for PeerFound {
 //   fn deserialize_peer(&self) -> Result<Peer, PacketError> {
-//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_| PacketError::MalformedPacket)?)
-//   }
+//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_|
+// PacketError::MalformedPacket)?)   }
 // }
 
 // impl PeerPacket for PeerExpired {
 //   fn deserialize_peer(&self) -> Result<Peer, PacketError> {
-//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_| PacketError::MalformedPacket)?)
-//   }
+//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_|
+// PacketError::MalformedPacket)?)   }
 // }

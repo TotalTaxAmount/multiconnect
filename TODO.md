@@ -3,13 +3,13 @@
 ## All
 - Write docs
 - Write tests
+- Switch config to a create
 
 ## Protocol
 - Pairing
 - Refactor impls and util functions (traits?)
 
 ## Desktop
-- Refactor daemon setup (basically rewrite)
 
 ## Android 
 - Android app

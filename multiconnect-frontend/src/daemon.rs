@@ -1,28 +1,27 @@
-use std::{
-  collections::{HashSet, VecDeque},
-  f32::consts::LN_10,
-  ops::Not,
-  sync::Arc,
-};
+use std::sync::Arc;
 
-use log::{debug, error, info, trace, warn};
-use multiconnect_protocol::{peer::PeerFound, Packet, Peer};
-use serde::{Deserialize, Serialize};
+use log::{debug, error, info, trace};
+use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpSocket,
-  sync::{mpsc, Mutex, Notify, RwLock},
-  time::Sleep,
+  sync::{
+    broadcast::{self, error::RecvError},
+    mpsc, Mutex,
+  },
 };
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
-type Queue = Arc<(Notify, Mutex<VecDeque<Packet>>)>;
-pub type SharedDaemon = Arc<Mutex<Daemon>>;
+pub type SharedDaemon = Arc<Daemon>;
 const PORT: u16 = 10999;
 
 #[derive(Debug)]
 pub struct Daemon {
-  queue: Queue,
-  packet_rx: mpsc::Receiver<Packet>,
+  /// Incoming packet receiver from daemon
+  incoming_rx: broadcast::Receiver<Packet>,
+
+  /// Outgoing packet sender to daemon
+  outgoing_tx: mpsc::Sender<Packet>,
 }
 
 impl Daemon {
@@ -36,92 +35,84 @@ impl Daemon {
         return Err(Box::new(e));
       }
     };
-    info!("Connected to daemon");
+    info!("Connected to the daemon");
 
-    let queue: Queue = Arc::new((Notify::new(), Mutex::new(VecDeque::new())));
-    let queue_clone = Arc::clone(&queue);
-
-    let (packet_tx, packet_rx) = mpsc::channel(100);
+    let (incoming_tx, incoming_rx) = broadcast::channel(100);
+    let (outgoing_tx, mut outgoing_rx) = mpsc::channel(100);
 
     tokio::spawn(async move {
       let (mut read_half, mut write_half) = stream.into_split();
 
-      let read_task = tokio::spawn(async move {
-        loop {
-          match read_half.read_u16().await {
-            Ok(len) => {
-              if len > u16::MAX {
-                error!("Packet is to big: {}", len);
-                continue;
-              }
-
-              trace!("Received packet with len {}", len);
-
-              let mut raw: Vec<u8> = vec![0u8; len.into()];
-              match read_half.read_exact(&mut raw).await {
-                Ok(_) => {
-                  let packet = match Packet::from_bytes(&raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                      error!("Error decoding packet {}", e);
-                      continue;
-                    }
-                  };
-
-                  debug!("Received {:?} packet", packet);
-
-                  if let Err(e) = packet_tx.send(packet).await {
-                    error!("Error sending packet (local): {}", e);
-                  }
-                }
-                Err(e) => {
-                  error!("Read error: {}", e);
+      loop {
+        tokio::select! {
+          res = read_half.read_u16() => {
+            match res {
+              Ok(len) => {
+                if len > u16::MAX {
+                  error!("Packet is to big: {}", len);
                   continue;
                 }
-              };
-            }
-            Err(_) => {
-              info!("Connection closed by peer");
-              break;
+
+                trace!("Received packet with len {}", len);
+
+                let mut raw: Vec<u8> = vec![0u8; len.into()];
+                match read_half.read_exact(&mut raw).await {
+                  Ok(_) => {
+                    let packet = match Packet::from_bytes(&raw) {
+                      Ok(p) => p,
+                      Err(e) => {
+                        error!("Error decoding packet {}", e);
+                        continue;
+                      }
+                    };
+
+                    debug!("Received {:?} packet", packet);
+
+                    if let Err(e) = incoming_tx.send(packet) {
+                      error!("Error sending packet (local): {}", e);
+                    }
+                  }
+                  Err(e) => {
+                    error!("Read error: {}", e);
+                    continue;
+                  }
+                };
+              }
+              Err(_) => {
+                info!("Connection closed by peer");
+                break;
+              }
             }
           }
-        }
-      });
-
-      let write_task = tokio::spawn(async move {
-        loop {
-          queue_clone.0.notified().await;
-          let mut locked = queue_clone.1.lock().await;
-          while let Some(packet) = locked.pop_back() {
-            debug!("Sending {:?} packet", packet);
-            let bytes = Packet::to_bytes(&packet);
-            match bytes {
-              Ok(b) => {
-                if let Err(e) = write_half.write_all(&b).await {
+          res = outgoing_rx.recv() => {
+            match res {
+              Some(p) => {
+                let bytes = Packet::to_bytes(&p).unwrap();
+                debug!("Sending packet: {:?}", p);
+                debug!("Raw packet: {:?}", bytes);
+                if let Err(e) = write_half.write_all(&bytes).await {
                   error!("Write error: {}", e);
-                  break;
-                };
+                }
+
                 let _ = write_half.flush().await;
               }
-              Err(_) => todo!(),
+              None => todo!(),
             }
           }
         }
-      });
-
-      let _ = tokio::try_join!(read_task, write_task);
+      }
     });
 
-    Ok(Arc::new(Mutex::new(Self { queue, packet_rx })))
+    Ok(Arc::new(Self { incoming_rx, outgoing_tx }))
   }
 
   /// Add a packet to the queue
-  pub async fn add_to_queue(&mut self, packet: Packet) {
-    self.queue.1.lock().await.push_front(packet);
-    self.queue.0.notify_one();
+  pub async fn send_packet(&self, packet: Packet) {
+    let _ = self.outgoing_tx.send(packet).await;
   }
 
-  pub async fn on_packet(&mut self) -> Option<Packet> {
-    self.packet_rx.recv().await
+  /// Get a stream of incoming packets
+  pub fn packet_stream(&self) -> impl tokio_stream::Stream<Item = Result<Packet, BroadcastStreamRecvError>> {
+    BroadcastStream::new(self.incoming_rx.resubscribe())
   }
 }

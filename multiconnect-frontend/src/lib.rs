@@ -1,14 +1,10 @@
 mod controller;
 mod daemon;
 
-use std::sync::Arc;
-
 use controller::Controller;
 use daemon::Daemon;
-use log::info;
-use multiconnect_protocol::{Packet, Peer};
-use tauri::{async_runtime, App, Manager, State};
-use tokio::{sync::Mutex, task};
+use tauri::{async_runtime, Manager};
+use tokio::task;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

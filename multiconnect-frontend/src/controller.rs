@@ -1,5 +1,7 @@
-use multiconnect_protocol::{Packet, Peer, Ping};
+use log::warn;
+use multiconnect_protocol::{Packet, Peer};
 use tauri::{AppHandle, Emitter};
+use tokio_stream::StreamExt;
 
 use crate::daemon::SharedDaemon;
 
@@ -12,19 +14,25 @@ impl Controller {
   pub async fn new(daemon: SharedDaemon, app: AppHandle) -> Self {
     let daemon_clone = daemon.clone();
     tokio::spawn(async move {
+      let mut stream = daemon_clone.packet_stream();
       loop {
-        let mut locked = daemon_clone.lock().await;
-        match locked.on_packet().await {
-          Some(Packet::PeerFound(packet)) => {
-            let _ = app.emit("peer-found", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+        // let mut locked = daemon_clone.lock().await;
+        if let Some(res) = stream.next().await {
+          match res {
+            Ok(Packet::PeerFound(packet)) => {
+              let _ = app.emit("peer-found", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+            }
+            Ok(Packet::PeerExpired(packet)) => {
+              let _ = app.emit("peer-expired", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+            }
+            Ok(Packet::PeerPairRequest(packet)) => {
+              let _ = app.emit("pair-request", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+            }
+            Ok(_) | Err(_) => {}
           }
-          Some(Packet::PeerExpired(packet)) => {
-            let _ = app.emit("peer-expired", bincode::deserialize::<Peer>(&packet.peer).unwrap());
-          }
-          Some(Packet::PeerPairRequest(packet)) => {
-            let _ = app.emit("pair-request", bincode::deserialize::<Peer>(&packet.peer).unwrap());
-          }
-          Some(_) | None => {}
+        } else {
+          warn!("Stream closed");
+          break;
         }
       }
     });
@@ -32,7 +40,7 @@ impl Controller {
     Self { daemon }
   }
 
-  pub async fn add_to_queue(&mut self, packet: Packet) {
-    self.daemon.lock().await.add_to_queue(packet).await;
+  pub async fn send_packet(&self, packet: Packet) {
+    self.daemon.send_packet(packet).await;
   }
 }

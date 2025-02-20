@@ -1,16 +1,20 @@
 pub mod config;
 pub mod networking;
 
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use log::{debug, error, info, trace};
 use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
-  sync::{broadcast::{self, error::RecvError}, mpsc, watch, Mutex, Notify, RwLock},
+  sync::{
+    broadcast::{self, error::RecvError},
+    mpsc, watch, Mutex,
+  },
   time,
 };
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 pub type SharedDaemon = Arc<Daemon>;
 
@@ -51,7 +55,13 @@ impl Daemon {
     let (incoming_tx, incoming_rx) = broadcast::channel(100);
     let (outgoing_tx, outgoing_rx) = mpsc::channel(100);
 
-    let daemon = Arc::new(Self { listener, incoming_tx, incoming_rx, outgoing_tx, outgoing_rx: Arc::new(Mutex::new(outgoing_rx)) });
+    let daemon = Arc::new(Self {
+      listener,
+      incoming_tx,
+      incoming_rx,
+      outgoing_tx,
+      outgoing_rx: Arc::new(Mutex::new(outgoing_rx)),
+    });
 
     Ok(daemon)
   }
@@ -80,11 +90,17 @@ impl Daemon {
   /// be used with one client so it is fine for now
   /// ### Arguments:
   /// * `stream` - The [`TcpStream`] for the client connect
-  /// * `incoming_tx` - A [`broadcast::Sender<Packet>`]. Packets received from clients are sent on this channel
-  /// * `outgoing_rx` - A [`Arc<Mutex<mpsc::Receiver<Packet>>>`]. Packets that need to be send to the client are received
+  /// * `incoming_tx` - A [`broadcast::Sender<Packet>`]. Packets received from
+  ///   clients are sent on this channel
+  /// * `outgoing_rx` - A [`Arc<Mutex<mpsc::Receiver<Packet>>>`]. Packets that
+  ///   need to be send to the client are received
   /// on this channel
   // TODO: Possibly use self in the future
-  async fn handle(stream: TcpStream, incoming_tx: broadcast::Sender<Packet>, outgoing_rx: Arc<Mutex<mpsc::Receiver<Packet>>>) {
+  async fn handle(
+    stream: TcpStream,
+    incoming_tx: broadcast::Sender<Packet>,
+    outgoing_rx: Arc<Mutex<mpsc::Receiver<Packet>>>,
+  ) {
     let (mut read_half, mut write_half) = stream.into_split();
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
@@ -131,7 +147,7 @@ impl Daemon {
               break;
             }
           }
-        } 
+        }
 
         res = outgoing_lock.recv() => {
           match res {
@@ -165,8 +181,8 @@ impl Daemon {
     let _ = self.outgoing_tx.send(packet).await;
   }
 
-  /// Await a packet to be received
-  pub async fn on_packet(&mut self) -> Result<Packet, RecvError> {
-    self.incoming_rx.recv().await
+  /// Get a stream of incoming packets
+  pub fn packet_stream(&self) -> impl tokio_stream::Stream<Item = Result<Packet, BroadcastStreamRecvError>> {
+    BroadcastStream::new(self.incoming_rx.resubscribe())
   }
 }

@@ -1,18 +1,21 @@
 mod pairing;
 mod store;
 
-use std::{error::Error, sync::Arc, time::Duration};
+use std::{error::Error, time::Duration};
 
 use libp2p::{
-  futures::StreamExt, mdns, noise, request_response::{self, Config, ProtocolSupport}, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, SwarmBuilder
+  futures::StreamExt,
+  mdns, noise,
+  request_response::{self, Config, ProtocolSupport},
+  swarm::{NetworkBehaviour, SwarmEvent},
+  tcp, yamux, Multiaddr, SwarmBuilder,
 };
 use log::{debug, error, info, trace};
 use multiconnect_protocol::{
-  peer::{PeerExpired, PeerFound, PeerPairRequest},
+  peer::{PeerExpired, PeerFound},
   Packet, Peer,
 };
 use pairing::PairingCodec;
-use tokio::sync::{Mutex, RwLock};
 use tracing_subscriber::EnvFilter;
 
 use crate::SharedDaemon;
@@ -55,6 +58,8 @@ impl NetworkManager {
       .with_behaviour(|key| MulticonnectBehavior::new(key).unwrap())?
       .build();
 
+    info!("Local peer id: {}", swarm.local_peer_id());
+
     let mut bound = false;
     for port in 1590..=1600 {
       let addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", port).parse()?;
@@ -66,7 +71,6 @@ impl NetworkManager {
     }
 
     if !bound {
-      error!("Failed to bind to any port in the range 1590-1600");
       return Err("Failed to bind to any port in the range 1590-1600".into());
     }
 

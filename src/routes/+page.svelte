@@ -8,18 +8,19 @@
 
   listen<Peer>('peer-found', (event) => {
     peers.set(event.payload.peer_id, event.payload);
+    console.debug(`Found a peer, id = ${event.payload.peer_id}`);
     if (peers.size > 0 ) loading = false;
   });
 
   listen<Peer>('peer-expired', (event) => {
-    console.log("peer expired");
+    console.debug(`Peer expired, id = ${event.payload.peer_id}`);
     peers.delete(event.payload.peer_id);
     if (peers.size <= 0) loading = true;
   });
 
   listen<Peer>('peer-pair', (event) => {
-    console.log(`New pairing request from: ${pairingRequest?.peer_id}`);
     pairingRequest = event.payload;
+    console.debug(`New pairing request from: ${pairingRequest?.peer_id}`);
   });
 
   function closePopup() {
