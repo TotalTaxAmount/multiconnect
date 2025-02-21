@@ -32,7 +32,7 @@ pub fn run() {
     .expect("error while running tauri application");
 }
 
-// #[tauri::command]
-// async fn list_peers(controller: State<'_, Controller>) -> Result<Vec<Peer>,
-// ()> {   Ok(controller.get_peers().await)
-// }
+#[tauri::command]
+async fn send_pairing_request(controller: State<'_, Controller>) -> Result<(),()> {   
+  
+}

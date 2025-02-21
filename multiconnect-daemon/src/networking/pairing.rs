@@ -36,7 +36,7 @@ impl request_response::Codec for PairingCodec {
     let mut buf = Vec::new();
     io.read_exact(&mut buf).await?;
 
-    PeerPairRequest::decode_length_delimited(&*buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+    PeerPairRequest::decode(&*buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
   }
 
   #[doc = " Reads a response from the given I/O stream according to the"]
@@ -54,7 +54,7 @@ impl request_response::Codec for PairingCodec {
     let mut buf = Vec::new();
     io.read_exact(&mut buf).await?;
 
-    PeerPairResponse::decode_length_delimited(&*buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+    PeerPairResponse::decode(&*buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
   }
 
   #[doc = " Writes a request to the given I/O stream according to the"]
@@ -67,7 +67,7 @@ impl request_response::Codec for PairingCodec {
     req: Self::Request,
   ) -> io::Result<()> {
     let mut buf = Vec::new();
-    req.encode_length_delimited(&mut buf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    req.encode(&mut buf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     io.write_all(&buf).await?;
     io.flush().await
   }
@@ -82,7 +82,7 @@ impl request_response::Codec for PairingCodec {
     res: Self::Response,
   ) -> io::Result<()> {
     let mut buf = Vec::new();
-    res.encode_length_delimited(&mut buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    res.encode(&mut buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     io.write_all(&buf).await?;
     io.flush().await
   }
