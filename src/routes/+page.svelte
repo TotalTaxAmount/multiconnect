@@ -1,7 +1,8 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
+  import type { Peer } from "../lib/types";
+  import { sendPairingRequest } from "../lib/commands";
 
-  type Peer = { peer_id: string; multiaddr: string };
   let peers: Map<string, Peer> = new Map<string, Peer>();
   let loading = true;
   let pairingRequest: Peer | null = null;
@@ -12,9 +13,9 @@
     if (peers.size > 0 ) loading = false;
   });
 
-  listen<Peer>('peer-expired', (event) => {
-    console.debug(`Peer expired, id = ${event.payload.peer_id}`);
-    peers.delete(event.payload.peer_id);
+  listen<string>('peer-expired', (event) => {
+    console.debug(`Peer expired, id = ${event.payload}`);
+    peers.delete(event.payload);
     if (peers.size <= 0) loading = true;
   });
 
@@ -49,7 +50,9 @@
       </li>
     {:else}
       {#each peers.values() as peer}
-        <li>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <li class="peer" on:click={() => sendPairingRequest(peer)}>
           <strong>Peer ID:</strong> {peer.peer_id} <br />
           <strong>Multiaddr:</strong> {peer.multiaddr}
         </li>
@@ -98,6 +101,11 @@
     background: #9f9999;
     padding: 10px;
     border-radius: 5px;
+  }
+
+  .peer-list .peer:hover {
+    background: #6e6969;
+    cursor: pointer;
   }
 
   .spinner-container {

@@ -3,6 +3,7 @@ use libp2p::{
   futures::{io, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
   request_response,
 };
+use log::info;
 use multiconnect_protocol::peer::{PeerPairRequest, PeerPairResponse};
 
 use prost::Message;
@@ -29,14 +30,14 @@ impl request_response::Codec for PairingCodec {
     protocol: &Self::Protocol,
     io: &mut T,
   ) -> io::Result<Self::Request> {
-    // let mut len_buf = [0u8; 4];
-    // io.read_exact(&mut len_buf).await?;
-    // let len = u32::from_be_bytes(len_buf) as usize;
+    let mut len_buf = [0u8; 4];
+    io.read_exact(&mut len_buf).await?;
+    let len = u32::from_be_bytes(len_buf) as usize;
 
-    let mut buf = Vec::new();
+    let mut buf = vec![0u8; len];
     io.read_exact(&mut buf).await?;
 
-    PeerPairRequest::decode(&*buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+    PeerPairRequest::decode(&buf[..]).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
   }
 
   #[doc = " Reads a response from the given I/O stream according to the"]
@@ -47,14 +48,14 @@ impl request_response::Codec for PairingCodec {
     protocol: &Self::Protocol,
     io: &mut T,
   ) -> io::Result<Self::Response> {
-    // let mut len_buf = [0u8; 4];
-    // io.read_exact(&mut len_buf).await?;
-    // let len = u32::from_be_bytes(len_buf) as usize;
+    let mut len_buf = [0u8; 4];
+    io.read_exact(&mut len_buf).await?;
+    let len = u32::from_be_bytes(len_buf) as usize;
 
-    let mut buf = Vec::new();
+    let mut buf = vec![0u8; len];
     io.read_exact(&mut buf).await?;
 
-    PeerPairResponse::decode(&*buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+    PeerPairResponse::decode(&buf[..]).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
   }
 
   #[doc = " Writes a request to the given I/O stream according to the"]
@@ -67,7 +68,11 @@ impl request_response::Codec for PairingCodec {
     req: Self::Request,
   ) -> io::Result<()> {
     let mut buf = Vec::new();
-    req.encode(&mut buf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    req.encode(&mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    let len = buf.len() as u32;
+    io.write_all(&len.to_be_bytes()).await?;
+
     io.write_all(&buf).await?;
     io.flush().await
   }
@@ -82,7 +87,11 @@ impl request_response::Codec for PairingCodec {
     res: Self::Response,
   ) -> io::Result<()> {
     let mut buf = Vec::new();
-    res.encode(&mut buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    res.encode(&mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    let len = buf.len() as u32;
+    io.write_all(&len.to_be_bytes()).await?;
+
     io.write_all(&buf).await?;
     io.flush().await
   }

@@ -20,8 +20,8 @@ impl PeerFound {
 }
 
 impl PeerExpired {
-  pub fn new(peer: Peer) -> Self {
-    Self { id: Packet::create_id(), peer: bincode::serialize(&peer).unwrap() }
+  pub fn new(peer_id: &PeerId) -> Self {
+    Self { id: Packet::create_id(), peer_id: peer_id.to_string() }
   }
 }
 

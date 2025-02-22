@@ -10,7 +10,7 @@ use libp2p::{
   swarm::{NetworkBehaviour, SwarmEvent},
   tcp, yamux, Multiaddr, SwarmBuilder,
 };
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use multiconnect_protocol::{
   peer::{PeerExpired, PeerFound},
   Packet, Peer,
@@ -75,6 +75,7 @@ impl NetworkManager {
     }
 
     let _ = tokio::spawn(async move {
+      let mut packet_stream = daemon.packet_stream();
       loop {
         tokio::select! {
           event = swarm.select_next_some() => match event {
@@ -84,24 +85,24 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                let peer = Peer { peer_id, multiaddr };
+                let peer = Peer { peer_id, multiaddr: multiaddr.clone() };
+
                 daemon.send_packet(Packet::PeerFound(PeerFound::new(peer))).await;
-                // let _ = p_sender.send(Packet::PeerFound(PeerFound::new(peer))).await;
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Expired(expired))) => {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                let peer = Peer { peer_id, multiaddr };
-                daemon.send_packet(Packet::PeerExpired(PeerExpired::new(peer))).await
-                // let _ = p_sender.send(Packet::PeerExpired(PeerExpired::new(peer))).await;
+
+                daemon.send_packet(Packet::PeerExpired(PeerExpired::new(&peer_id))).await
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
+              debug!("Received pairing protocol event from {}", peer);
               match message {
                 request_response::Message::Request { request_id: _, request, channel: _ } => {
-                  debug!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&request.peer).unwrap());
-                  // let _ = p_sender.send(Packet::PeerPairRequest(request)).await;
+                  info!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&request.peer).unwrap().peer_id);
+                  // let _ = p_sender.send(Packet::PeerPairRequest(r\equest)).await;
                   // let accepted = true;
                   // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
 
@@ -118,29 +119,28 @@ impl NetworkManager {
             _ => {
               trace!("Event: {:?}", event);
             }
+          },
+
+          packet = packet_stream.next() => if let Some(p) = packet {
+            match p {
+              Ok(Packet::PeerPairRequest(packet)) => {
+                let peer = bincode::deserialize::<Peer>(&packet.peer).unwrap();
+                debug!("Sending pair request to: {}", peer.peer_id);
+                swarm.behaviour_mut().pairing.send_request(&peer.peer_id, packet);
+              },
+              Ok(_) => {},
+              Err(e) => {
+                error!("Error decoding packet: {}", e)
+              },
+            }
+          } else {
+            warn!("Stream closed");
+            break;
           }
         }
       }
     });
 
-    // let _ = tokio::spawn(async move {
-    //   loop {
-    //     let packet: Option<Packet>;
-    //     {
-    //       let mut locked = daemon_cloned.lock().await;
-    //       packet = locked.on_packet().await;
-    //     }
-
-    //     match packet {
-    //       Some(Packet::PeerPairRequest(packet)) => {
-    //         debug!("Sending pair request");
-    //         let peer = bincode::deserialize::<Peer>(&packet.peer).unwrap();
-    //         // swarm.behaviour_mut().pairing.send_request(&peer.peer_id, packet);
-    //       },
-    //       Some(_) | None => {},
-    //     }
-    //   }()
-    // });
     Ok(())
   }
 }

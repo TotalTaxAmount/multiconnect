@@ -23,7 +23,7 @@ impl Controller {
               let _ = app.emit("peer-found", bincode::deserialize::<Peer>(&packet.peer).unwrap());
             }
             Ok(Packet::PeerExpired(packet)) => {
-              let _ = app.emit("peer-expired", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+              let _ = app.emit("peer-expired", packet.peer_id);
             }
             Ok(Packet::PeerPairRequest(packet)) => {
               let _ = app.emit("pair-request", bincode::deserialize::<Peer>(&packet.peer).unwrap());
@@ -40,6 +40,7 @@ impl Controller {
     Self { daemon }
   }
 
+  /// Send a packet to the daemon
   pub async fn send_packet(&self, packet: Packet) {
     self.daemon.send_packet(packet).await;
   }
