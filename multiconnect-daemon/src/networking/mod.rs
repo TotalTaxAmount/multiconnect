@@ -1,7 +1,8 @@
+
 mod pairing;
 mod store;
 
-use std::{error::Error, time::Duration};
+use std::{error::Error, io, time::Duration};
 
 use libp2p::{
   futures::StreamExt,
@@ -60,18 +61,13 @@ impl NetworkManager {
 
     info!("Local peer id: {}", swarm.local_peer_id());
 
-    let mut bound = false;
-    for port in 1590..=1600 {
+    if let Some(port) = port_check::free_local_ipv4_port_in_range(1590..=1600) {
       let addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", port).parse()?;
       if swarm.listen_on(addr.clone()).is_ok() {
         info!("Listening on {:?}", addr);
-        bound = true;
-        break;
       }
-    }
-
-    if !bound {
-      return Err("Failed to bind to any port in the range 1590-1600".into());
+    } else {
+      return Err(Box::new(io::Error::new(io::ErrorKind::AddrNotAvailable, "Could not find a port to bind to in rage 1590-1600")));
     }
 
     let _ = tokio::spawn(async move {
@@ -102,6 +98,8 @@ impl NetworkManager {
               match message {
                 request_response::Message::Request { request_id: _, request, channel: _ } => {
                   info!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&request.peer).unwrap().peer_id);
+
+                  daemon.send_packet(Packet::PeerPairRequest(request));
                   // let _ = p_sender.send(Packet::PeerPairRequest(r\equest)).await;
                   // let accepted = true;
                   // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));

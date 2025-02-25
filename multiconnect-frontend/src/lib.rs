@@ -7,13 +7,12 @@ use multiconnect_protocol::{peer::PeerPairRequest, Packet, Peer};
 use tauri::{async_runtime, Manager, State};
 use tokio::task;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  if std::env::var("MULTICONNECT_LOG").is_err() {
-    std::env::set_var("MULTICONNECT_LOG", "info");
+  if std::env::var("MC_LOG").is_err() {
+    std::env::set_var("MC_LOG", "info");
   }
 
-  pretty_env_logger::formatted_timed_builder().parse_env("MULTICONNECT_LOG").format_timestamp_secs().init();
+  pretty_env_logger::formatted_timed_builder().parse_env("MC_LOG").format_timestamp_secs().init();
 
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())

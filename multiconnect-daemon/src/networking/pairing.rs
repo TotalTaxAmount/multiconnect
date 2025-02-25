@@ -3,7 +3,7 @@ use libp2p::{
   futures::{io, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
   request_response,
 };
-use log::info;
+
 use multiconnect_protocol::peer::{PeerPairRequest, PeerPairResponse};
 
 use prost::Message;
@@ -24,12 +24,10 @@ impl request_response::Codec for PairingCodec {
 
   #[doc = " Reads a request from the given I/O stream according to the"]
   #[doc = " negotiated protocol."]
-  #[must_use]
-  async fn read_request<T: AsyncRead + Unpin + Send>(
-    &mut self,
-    protocol: &Self::Protocol,
-    io: &mut T,
-  ) -> io::Result<Self::Request> {
+  async fn read_request<T>(&mut self, protocol: &Self::Protocol, io: &mut T) -> io::Result<Self::Request>
+  where
+    T: AsyncRead + Unpin + Send,
+  {
     let mut len_buf = [0u8; 4];
     io.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
@@ -42,12 +40,10 @@ impl request_response::Codec for PairingCodec {
 
   #[doc = " Reads a response from the given I/O stream according to the"]
   #[doc = " negotiated protocol."]
-  #[must_use]
-  async fn read_response<T: AsyncRead + Unpin + Send>(
-    &mut self,
-    protocol: &Self::Protocol,
-    io: &mut T,
-  ) -> io::Result<Self::Response> {
+  async fn read_response<T>(&mut self, protocol: &Self::Protocol, io: &mut T) -> io::Result<Self::Response>
+  where
+    T: AsyncRead + Unpin + Send,
+  {
     let mut len_buf = [0u8; 4];
     io.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
@@ -60,14 +56,11 @@ impl request_response::Codec for PairingCodec {
 
   #[doc = " Writes a request to the given I/O stream according to the"]
   #[doc = " negotiated protocol."]
-  #[must_use]
-  async fn write_request<T: AsyncWrite + Unpin + Send>(
-    &mut self,
-    protocol: &Self::Protocol,
-    io: &mut T,
-    req: Self::Request,
-  ) -> io::Result<()> {
-    let mut buf = Vec::new();
+  async fn write_request<T>(&mut self, protocol: &Self::Protocol, io: &mut T, req: Self::Request) -> io::Result<()>
+  where
+    T: AsyncWrite + Unpin + Send,
+  {
+    let mut buf: Vec<u8> = Vec::new();
     req.encode(&mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     let len = buf.len() as u32;
@@ -79,13 +72,10 @@ impl request_response::Codec for PairingCodec {
 
   #[doc = " Writes a response to the given I/O stream according to the"]
   #[doc = " negotiated protocol."]
-  #[must_use]
-  async fn write_response<T: AsyncWrite + Unpin + Send>(
-    &mut self,
-    protocol: &Self::Protocol,
-    io: &mut T,
-    res: Self::Response,
-  ) -> io::Result<()> {
+  async fn write_response<T>(&mut self, protocol: &Self::Protocol, io: &mut T, res: Self::Response) -> io::Result<()>
+  where
+    T: AsyncWrite + Unpin + Send,
+  {
     let mut buf = Vec::new();
     res.encode(&mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 

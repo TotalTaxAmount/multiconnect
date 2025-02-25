@@ -3,11 +3,11 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-  if std::env::var("MULTICONNECT_LOG").is_err() {
-    std::env::set_var("MULTICONNECT_LOG", "info");
+  if std::env::var("MC_LOG").is_err() {
+    std::env::set_var("MC_LOG", "info");
   }
 
-  pretty_env_logger::formatted_timed_builder().parse_env("MULTICONNECT_LOG").format_timestamp_secs().init();
+  pretty_env_logger::formatted_timed_builder().parse_env("MC_LOG").format_timestamp_secs().init();
 
   let daemon = Daemon::new().await?;
   NetworkManager::start(daemon.clone()).await?;

@@ -40,7 +40,7 @@ pub struct Daemon {
 impl Daemon {
   /// Create a new daemon and bind too a port (`MC_PORT` env var)
   pub async fn new() -> Result<SharedDaemon, std::io::Error> {
-    let port = std::env::var("MC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(PORT);
+    let port: u16 = std::env::var("MC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(PORT);
 
     let listener = match TcpListener::bind(format!("127.0.0.1:{}", port)).await {
       Ok(l) => l,

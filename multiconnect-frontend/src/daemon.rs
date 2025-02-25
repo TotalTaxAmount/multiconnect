@@ -27,8 +27,10 @@ pub struct Daemon {
 impl Daemon {
   /// Connect to the daemon and establish a [`TcpStream`]
   pub async fn connect() -> Result<SharedDaemon, Box<dyn std::error::Error>> {
+    let port: u16 = std::env::var("MCD_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(PORT);
+
     let socket = TcpSocket::new_v4()?;
-    let stream = match socket.connect(format!("127.0.0.1:{}", PORT).parse()?).await {
+    let stream = match socket.connect(format!("127.0.0.1:{}", port).parse()?).await {
       Ok(s) => s,
       Err(e) => {
         error!("Failed to connect to daemon: {}", e);
