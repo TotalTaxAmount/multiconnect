@@ -8,3 +8,7 @@ import type { Peer } from "./types";
 export function sendPairingRequest(peer: Peer) {
   invoke('send_pairing_request', { peer: peer });
 }
+
+export function sendPairingResponse(accepted: boolean, req_id: number) {
+  invoke('send_pairing_response', { accepted: accepted, reqId: req_id })
+}

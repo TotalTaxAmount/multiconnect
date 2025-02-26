@@ -32,8 +32,8 @@ impl PeerPairRequest {
 }
 
 impl PeerPairResponse {
-  pub fn new(accepted: bool) -> Self {
-    Self { id: Packet::create_id(), accepted }
+  pub fn new(accepted: bool, req_id: u32) -> Self {
+    Self { id: Packet::create_id(), req_id, accepted }
   }
 }
 

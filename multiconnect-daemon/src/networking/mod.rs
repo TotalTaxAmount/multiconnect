@@ -2,14 +2,10 @@
 mod pairing;
 mod store;
 
-use std::{error::Error, io, time::Duration};
+use std::{collections::{HashMap, HashSet}, error::Error, hash::Hash, io, time::Duration};
 
 use libp2p::{
-  futures::StreamExt,
-  mdns, noise,
-  request_response::{self, Config, ProtocolSupport},
-  swarm::{NetworkBehaviour, SwarmEvent},
-  tcp, yamux, Multiaddr, SwarmBuilder,
+  futures::StreamExt, mdns, noise, request_response::{self, Config, ProtocolSupport, ResponseChannel}, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, PeerId, SwarmBuilder
 };
 use log::{debug, error, info, trace, warn};
 use multiconnect_protocol::{
@@ -50,6 +46,11 @@ impl NetworkManager {
   pub async fn start(daemon: SharedDaemon) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
+    let mut pending_requests: HashMap<u32, ResponseChannel<_>> = HashMap::new();
+
+    let mut peers: HashMap<PeerId, Peer> = HashMap::new();
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+
     debug!("Initializing new swarm");
 
     let mut swarm = SwarmBuilder::with_new_identity()
@@ -82,6 +83,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                 let peer = Peer { peer_id, multiaddr: multiaddr.clone() };
+                peers.insert(peer_id, peer.clone());
 
                 daemon.send_packet(Packet::PeerFound(PeerFound::new(peer))).await;
               }
@@ -90,16 +92,20 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
 
+                peers.remove(&peer_id);
+
                 daemon.send_packet(Packet::PeerExpired(PeerExpired::new(&peer_id))).await
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
               debug!("Received pairing protocol event from {}", peer);
               match message {
-                request_response::Message::Request { request_id: _, request, channel: _ } => {
+                request_response::Message::Request { request_id: _, request, channel } => {
                   info!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&request.peer).unwrap().peer_id);
 
-                  daemon.send_packet(Packet::PeerPairRequest(request));
+                  pending_requests.insert(request.id, channel);
+
+                  daemon.send_packet(Packet::PeerPairRequest(request)).await;
                   // let _ = p_sender.send(Packet::PeerPairRequest(r\equest)).await;
                   // let accepted = true;
                   // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
@@ -111,6 +117,10 @@ impl NetworkManager {
                 },
                 request_response::Message::Response { request_id, response } => {
                   info!("Received paring response: id = {}, res = {:?}", request_id, response);
+
+                  if pending_requests.get(&response.req_id).is_some() {
+                    daemon.send_packet(Packet::PeerPairResponse(response)).await;
+                  }
                 },
               }
             }
@@ -126,7 +136,12 @@ impl NetworkManager {
                 debug!("Sending pair request to: {}", peer.peer_id);
                 swarm.behaviour_mut().pairing.send_request(&peer.peer_id, packet);
               },
-              Ok(_) => {},
+              Ok(Packet::PeerPairResponse(packet)) => {
+                if let Some(ch) = pending_requests.remove(&packet.req_id) {
+                  let _ = swarm.behaviour_mut().pairing.send_response(ch, packet);
+                }
+              },
+              Ok(_) => {}
               Err(e) => {
                 error!("Error decoding packet: {}", e)
               },
@@ -134,6 +149,11 @@ impl NetworkManager {
           } else {
             warn!("Stream closed");
             break;
+          },
+          _ = interval.tick() => {
+            for peer in peers.values() {
+              daemon.send_packet(Packet::PeerFound(PeerFound::new(peer.clone()))).await;
+            }
           }
         }
       }

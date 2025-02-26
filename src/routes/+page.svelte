@@ -1,11 +1,11 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import type { Peer } from "../lib/types";
-  import { sendPairingRequest } from "../lib/commands";
+  import { sendPairingRequest, sendPairingResponse } from "../lib/commands";
 
   let peers: Map<string, Peer> = new Map<string, Peer>();
   let loading = true;
-  let pairingRequest: Peer | null = null;
+  let pairingRequest: [number, Peer] | null = null;
 
   listen<Peer>('peer-found', (event) => {
     peers.set(event.payload.peer_id, event.payload);
@@ -19,9 +19,9 @@
     if (peers.size <= 0) loading = true;
   });
 
-  listen<Peer>('peer-pair', (event) => {
+  listen<[number, Peer]>('pair-request', (event) => {
     pairingRequest = event.payload;
-    console.debug(`New pairing request from: ${pairingRequest?.peer_id}`);
+    console.debug(`New pairing request from: ${pairingRequest?.[1].peer_id}`);
   });
 
   function closePopup() {
@@ -29,14 +29,16 @@
   }
 
   function acceptPair() {
-    // TODO
-    console.log(`Pairing with ${pairingRequest?.peer_id}`);
+    if (!pairingRequest) return;
+    console.log(`Pairing with ${pairingRequest?.[1].peer_id}`);
+    sendPairingResponse(true, pairingRequest[0]);
     closePopup();
   }
 
   function rejectPair() {
-    // TODO
-    console.log(`Rejected pair rq from ${pairingRequest?.peer_id}`);
+    if (!pairingRequest) return;
+    console.log(`Rejected pair rq from ${pairingRequest?.[1].peer_id}`);
+    sendPairingResponse(false, pairingRequest?.[0]);
     closePopup();
   }
 </script>
@@ -64,8 +66,8 @@
     <div class="popup">
       <div class="popup-content">
         <h2>Pairing Request</h2>
-        <p><strong>Peer ID:</strong> {pairingRequest.peer_id}</p>
-        <p><strong>Multiaddr:</strong> {pairingRequest.multiaddr}</p>
+        <p><strong>Peer ID:</strong> {pairingRequest[1].peer_id}</p>
+        <p><strong>Multiaddr:</strong> {pairingRequest[1].multiaddr}</p>
         <button on:click={acceptPair}>Accept</button>
         <button on:click={rejectPair} class="reject">Reject</button>
       </div>

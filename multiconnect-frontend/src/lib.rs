@@ -3,7 +3,7 @@ mod daemon;
 
 use controller::Controller;
 use daemon::Daemon;
-use multiconnect_protocol::{peer::PeerPairRequest, Packet, Peer};
+use multiconnect_protocol::{peer::{PeerPairRequest, PeerPairResponse}, Packet, Peer};
 use tauri::{async_runtime, Manager, State};
 use tokio::task;
 
@@ -27,7 +27,7 @@ pub fn run() {
       });
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![send_pairing_request])
+    .invoke_handler(tauri::generate_handler![send_pairing_request, send_pairing_response])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
@@ -35,5 +35,11 @@ pub fn run() {
 #[tauri::command]
 async fn send_pairing_request(controller: State<'_, Controller>, peer: Peer) -> Result<(), ()> {
   controller.send_packet(Packet::PeerPairRequest(PeerPairRequest::new(&peer))).await;
+  Ok(())
+}
+
+#[tauri::command]
+async fn send_pairing_response(controller: State<'_, Controller>, accepted: bool, req_id: u32) -> Result<(), ()> {
+  controller.send_packet(Packet::PeerPairResponse(PeerPairResponse::new(accepted, req_id))).await;
   Ok(())
 }
