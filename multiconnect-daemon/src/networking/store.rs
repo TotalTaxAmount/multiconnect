@@ -5,9 +5,8 @@ use std::{
 };
 
 use libp2p::PeerId;
+use multiconnect_config::CONFIG;
 use multiconnect_protocol::Peer;
-
-use crate::config::CONFIG;
 
 pub struct Store {
   peers: HashMap<PeerId, Peer>,

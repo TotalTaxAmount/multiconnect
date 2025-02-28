@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use libp2p::{
   futures::{io, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-  request_response,
+  request_response, StreamProtocol,
 };
 
-use multiconnect_protocol::peer::{PeerPairRequest, PeerPairResponse};
+use multiconnect_protocol::{peer::{PeerPairRequest, PeerPairResponse}, Packet};
 
 use prost::Message;
 

@@ -13,13 +13,13 @@ tokio = { version = "1", features = ["full"] }
 libp2p = { version = "0.55.0", features = ["tcp", "quic", "ping", "serde", "mdns", "noise", "yamux", "dns", "tokio", "macros", "request-response", "identify", ] }
 
 multiconnect-protocol = { path = "../multiconnect-protocol"}
+multiconnect-config = { path = "../multiconnect-config" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4.26"
 pretty_env_logger = "0.5.0"
-dirs = "6.0.0"
-lazy_static = "1.5.0"
 bincode = "1.3.3"
 async-trait = "0.1.86"
 prost = "0.13"
 tokio-stream = { version = "0.1.17", features = [ "sync" ] }
 port_check = "0.2.1"
+libp2p-stream = "0.3.0-alpha"

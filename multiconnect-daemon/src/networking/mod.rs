@@ -1,26 +1,28 @@
-
-mod pairing;
+mod protocols;
 mod store;
 
 use std::{collections::{HashMap, HashSet}, error::Error, hash::Hash, io, time::Duration};
 
 use libp2p::{
-  futures::StreamExt, mdns, noise, request_response::{self, Config, ProtocolSupport, ResponseChannel}, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, PeerId, SwarmBuilder
+  futures::StreamExt, identify, identity, mdns, noise, request_response::{self, Config, ProtocolSupport, ResponseChannel}, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder
 };
 use log::{debug, error, info, trace, warn};
 use multiconnect_protocol::{
   peer::{PeerExpired, PeerFound},
   Packet, Peer,
 };
-use pairing::PairingCodec;
+use protocols::PairingCodec;
 use tracing_subscriber::EnvFilter;
 
 use crate::SharedDaemon;
+
+const STREAM_PROTOCOL: StreamProtocol = StreamProtocol::new("/stream");
 
 #[derive(NetworkBehaviour)]
 struct MulticonnectBehavior {
   mnds: mdns::tokio::Behaviour,
   pairing: request_response::Behaviour<PairingCodec>,
+  stream: libp2p_stream::Behaviour,
 }
 
 impl MulticonnectBehavior {
@@ -36,7 +38,11 @@ impl MulticonnectBehavior {
       Config::default(),
     );
 
-    Ok(Self { mnds: mdns::tokio::Behaviour::new(mnds_cfg, key.public().to_peer_id())?, pairing: pairing_protocol })
+    Ok(Self { 
+      mnds: mdns::tokio::Behaviour::new(mnds_cfg, key.public().to_peer_id())?, 
+      pairing: pairing_protocol,
+      stream: libp2p_stream::Behaviour::new()
+    })
   }
 }
 
@@ -53,14 +59,21 @@ impl NetworkManager {
 
     debug!("Initializing new swarm");
 
-    let mut swarm = SwarmBuilder::with_new_identity()
+    let keys = identity::Keypair::generate_ed25519(); // TODO: Load saved keys
+    let peer_id = keys.public().to_peer_id();
+
+    let mut swarm = SwarmBuilder::with_existing_identity(keys)
       .with_tokio()
-      .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
-      .with_quic()
+      .with_tcp(
+        tcp::Config::default(), 
+        noise::Config::new, 
+        yamux::Config::default)?
       .with_behaviour(|key| MulticonnectBehavior::new(key).unwrap())?
       .build();
 
-    info!("Local peer id: {}", swarm.local_peer_id());
+    info!("Local peer id: {}", peer_id);
+
+    let incoming_streams = swarm.behaviour().stream.new_control().accept(STREAM_PROTOCOL).unwrap();
 
     if let Some(port) = port_check::free_local_ipv4_port_in_range(1590..=1600) {
       let addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", port).parse()?;
@@ -106,13 +119,6 @@ impl NetworkManager {
                   pending_requests.insert(request.id, channel);
 
                   daemon.send_packet(Packet::PeerPairRequest(request)).await;
-                  // let _ = p_sender.send(Packet::PeerPairRequest(r\equest)).await;
-                  // let accepted = true;
-                  // let _ = swarm.behaviour_mut().pairing.send_response(channel, PairingResponse(accepted));
-
-                  // if accepted {
-                  //   info!("Peer paired successfully!");
-                  // }
 
                 },
                 request_response::Message::Response { request_id, response } => {
@@ -120,7 +126,7 @@ impl NetworkManager {
 
                   if pending_requests.get(&response.req_id).is_some() {
                     daemon.send_packet(Packet::PeerPairResponse(response)).await;
-                  }
+                  };
                 },
               }
             }

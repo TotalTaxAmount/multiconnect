@@ -1,4 +1,3 @@
-pub mod config;
 pub mod networking;
 
 use std::{sync::Arc, time::Duration};
