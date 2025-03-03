@@ -22,9 +22,23 @@ message PeerPairRequest {
 message PeerPairResponse {
   uint32 id = 1;
   uint32 req_id = 2;
-  bool accepted = 3;
+  bytes peer = 3;
+  bool accepted = 4;
 }
 
-message PeerConnect {
+// Different device types
+enum DeviceType {
+  ANDROID = 0;
+  LAPTOP = 1;
+  DESKTOP = 2;
+}
+
+// Used to request additional info about a device
+message PeerMeta {
   uint32 id = 1;
+  string os_name = 2;
+  string device_name = 3;
+  string mc_version = 4;
+  DeviceType type = 5;
+  
 }

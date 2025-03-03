@@ -32,25 +32,13 @@ impl PeerPairRequest {
 }
 
 impl PeerPairResponse {
-  pub fn new(accepted: bool, req_id: u32) -> Self {
-    Self { id: Packet::create_id(), req_id, accepted }
+  pub fn new(accepted: bool, req_id: u32, peer: &Peer) -> Self {
+    Self { id: Packet::create_id(), req_id, accepted, peer: bincode::serialize(&peer).unwrap() }
   }
 }
 
-// impl PeerPacket for PeerPairRequest {
-//   fn deserialize_peer(&self) -> Result<Peer, PacketError> {
-//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_|
-// PacketError::MalformedPacket)?)   }
-// }
-
-// impl PeerPacket for PeerFound {
-//   fn deserialize_peer(&self) -> Result<Peer, PacketError> {
-//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_|
-// PacketError::MalformedPacket)?)   }
-// }
-
-// impl PeerPacket for PeerExpired {
-//   fn deserialize_peer(&self) -> Result<Peer, PacketError> {
-//     Ok(bincode::deserialize::<Peer>(&self.peer).map_err(|_|
-// PacketError::MalformedPacket)?)   }
-// }
+impl PeerMeta {
+  pub fn new(os_name: String, device_name: String, mc_version: String, device_type: DeviceType) -> Self {
+    Self { id: Packet::create_id(), os_name, device_name, mc_version, r#type: device_type.into() }
+  }
+}

@@ -31,14 +31,14 @@
   function acceptPair() {
     if (!pairingRequest) return;
     console.log(`Pairing with ${pairingRequest?.[1].peer_id}`);
-    sendPairingResponse(true, pairingRequest[0]);
+    sendPairingResponse(true, pairingRequest[0], pairingRequest[1]);
     closePopup();
   }
 
   function rejectPair() {
     if (!pairingRequest) return;
     console.log(`Rejected pair rq from ${pairingRequest?.[1].peer_id}`);
-    sendPairingResponse(false, pairingRequest?.[0]);
+    sendPairingResponse(false, pairingRequest[0], pairingRequest[1]);
     closePopup();
   }
 </script>

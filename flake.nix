@@ -15,17 +15,19 @@
 
     buildInputs = with pkgs; [
       rustup
+      rust-analyzer
       cargo
       nodejs_23
       yarn
       protobuf_27
+#      openssl_3
 
       # Tauri
       cargo-tauri
       pkg-config 
       libsoup_3
       webkitgtk_4_1
-      openssl
+ #     openssl
       librsvg
         
       # Android

@@ -26,7 +26,7 @@ impl Controller {
               let _ = app.emit("peer-expired", packet.peer_id);
             }
             Ok(Packet::PeerPairRequest(packet)) => {
-              let _ = app.emit("pair-request", (&packet.id ,bincode::deserialize::<Peer>(&packet.peer).unwrap()));
+              let _ = app.emit("pair-request", (&packet.id, bincode::deserialize::<Peer>(&packet.peer).unwrap()));
             }
             Ok(_) | Err(_) => {}
           }

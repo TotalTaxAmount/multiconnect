@@ -1,10 +1,11 @@
 use std::{
   collections::HashMap,
-  fs::{File, OpenOptions},
+  fs::{remove_file, File, OpenOptions},
   io::{Read, Write},
 };
 
 use libp2p::PeerId;
+use log::error;
 use multiconnect_config::CONFIG;
 use multiconnect_protocol::Peer;
 
@@ -18,25 +19,22 @@ impl Store {
   }
 
   fn load() -> HashMap<PeerId, Peer> {
-    let file = CONFIG.get_config_dir().join("saved");
-    if !file.exists() {
+    let path = CONFIG.get_config_dir().join("saved");
+    if !path.exists() {
       return HashMap::new();
     }
 
-    let mut file = File::open(file).unwrap();
+    let mut file = File::open(&path).unwrap();
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).unwrap();
 
-    let peers: HashMap<PeerId, Peer> = bincode::deserialize(&buf).unwrap();
-    // let mut key_map = HashMap::new();
-
-    // for (peer_id_string, key_bytes) in keys {
-    //   let peer_id = PeerId::from_str(&peer_id_string).unwrap();
-    //   // let keypair = Keypair::from_protobuf_encoding(&key_bytes).unwrap();
-    //   key_map.insert(peer_id, keypair);
-    // }
-
-    peers
+    if let Ok(peers) = bincode::deserialize::<HashMap<PeerId, Peer>>(&buf) {
+      return peers;
+    } else {
+      error!("Failed to read saved peers from file");
+      remove_file(path);
+      return HashMap::new();
+    }
   }
 
   fn save(&self) {
@@ -56,7 +54,7 @@ impl Store {
     self.peers.get(&peer_id)
   }
 
-  pub fn remove_pper(&mut self, peer_id: PeerId) -> Option<Peer> {
+  pub fn remove_peer(&mut self, peer_id: PeerId) -> Option<Peer> {
     let peer = self.peers.remove(&peer_id);
     self.save();
     peer

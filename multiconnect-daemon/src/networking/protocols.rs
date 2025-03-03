@@ -4,7 +4,10 @@ use libp2p::{
   request_response, StreamProtocol,
 };
 
-use multiconnect_protocol::{peer::{PeerPairRequest, PeerPairResponse}, Packet};
+use multiconnect_protocol::{
+  peer::{PeerPairRequest, PeerPairResponse},
+  Packet,
+};
 
 use prost::Message;
 

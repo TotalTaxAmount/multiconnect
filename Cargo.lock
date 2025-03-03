@@ -3308,7 +3308,7 @@ dependencies = [
 name = "multiconnect-config"
 version = "0.1.0"
 dependencies = [
- "dirs 6.0.0",
+ "dirs",
  "lazy_static",
  "log",
 ]
@@ -3330,6 +3330,7 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing-subscriber",
 ]
 
@@ -5987,6 +5988,7 @@ checksum = "d7fcaa8d55a2bdd6b83ace262b016eca0d79ee02818c5c1bcdf0305114081078"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",

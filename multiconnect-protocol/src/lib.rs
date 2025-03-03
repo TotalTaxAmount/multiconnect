@@ -24,6 +24,12 @@ pub enum PacketError {
   EncodeError,
 }
 
+impl From<std::io::Error> for PacketError {
+  fn from(value: std::io::Error) -> Self {
+    todo!()
+  }
+}
+
 /// Peer struct, will have other field like device type and common name
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub struct Peer {
@@ -31,6 +37,12 @@ pub struct Peer {
   pub peer_id: PeerId,
   /// The libp2p address for the peer
   pub multiaddr: Multiaddr,
+}
+
+/// Device struct containing a peer and metadata about the device
+pub struct Device {
+  pub peer: Peer,
+  pub meta: PeerMeta,
 }
 
 impl Peer {
