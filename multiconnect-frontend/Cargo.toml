@@ -27,5 +27,5 @@ multiconnect-protocol = { path = "../multiconnect-protocol"}
 tokio = { version = "1", features = ["full"] }
 pretty_env_logger = "0.5.0"
 log = "0.4.26"
-bincode = "1.3.3"
+bincode = "2.0.0"
 tokio-stream = { version = "0.1.17", features = [ "sync" ] }
