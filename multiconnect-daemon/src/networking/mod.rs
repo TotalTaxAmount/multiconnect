@@ -15,7 +15,7 @@ use libp2p::{
   identity::{self, Keypair},
   mdns, noise,
   request_response::{self, Config, ProtocolSupport, ResponseChannel},
-  swarm::{NetworkBehaviour, SwarmEvent},
+  swarm::{NetworkBehaviour, OneShotHandler, OneShotHandlerConfig, SubstreamProtocol, SwarmEvent},
   tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol, SwarmBuilder,
 };
 use log::{debug, error, info, trace, warn};
@@ -24,7 +24,7 @@ use multiconnect_protocol::{
   peer::{PeerExpired, PeerFound},
   Packet, Peer,
 };
-use protocols::PairingCodec;
+use protocols::PacketCodec;
 use store::Store;
 use tokio::{
   fs::{File, OpenOptions},
@@ -38,8 +38,7 @@ use crate::SharedDaemon;
 #[derive(NetworkBehaviour)]
 struct MulticonnectBehavior {
   mnds: mdns::tokio::Behaviour,
-  pairing: request_response::Behaviour<PairingCodec>,
-  stream: libp2p_stream::Behaviour,
+  packet_protocol: request_response::Behaviour<PacketCodec>,
 }
 
 impl MulticonnectBehavior {
@@ -50,16 +49,12 @@ impl MulticonnectBehavior {
       ..Default::default()
     };
 
-    let pairing_protocol = request_response::Behaviour::<PairingCodec>::new(
-      vec![("/pairing/1".into(), ProtocolSupport::Full)],
+    let packet_protocol = request_response::Behaviour::<PacketCodec>::new(
+      vec![("/multiconnect/1".into(), ProtocolSupport::Full)],
       Config::default(),
     );
 
-    Ok(Self {
-      mnds: mdns::tokio::Behaviour::new(mnds_cfg, key.public().to_peer_id())?,
-      pairing: pairing_protocol,
-      stream: libp2p_stream::Behaviour::new(),
-    })
+    Ok(Self { mnds: mdns::tokio::Behaviour::new(mnds_cfg, key.public().to_peer_id())?, packet_protocol })
   }
 }
 
@@ -69,7 +64,7 @@ impl NetworkManager {
   pub async fn start(daemon: SharedDaemon) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
-    let mut pending_requests: HashMap<u32, (ResponseChannel<_>, Instant)> = HashMap::new();
+    let mut pending_requests: HashMap<u32, Instant> = HashMap::new();
     let mut timeout = interval(Duration::from_secs(30));
 
     let mut peers: HashMap<PeerId, Peer> = HashMap::new();
@@ -127,29 +122,43 @@ impl NetworkManager {
                 daemon.send_packet(Packet::PeerExpired(PeerExpired::new(&peer_id))).await
               }
             }
-            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Pairing(request_response::Event::Message { peer, connection_id, message })) => {
-              debug!("Received pairing protocol event from {}", peer);
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(request_response::Event::Message { peer, connection_id, message })) => {
               match message {
                 request_response::Message::Request { request_id: _, request, channel } => {
-                  info!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&request.peer).unwrap().peer_id);
+                  debug!("Received multiconnect protocol event from {}", peer);
+                  match request {
+                    Packet::Ping(ping) => todo!(),
+                    Packet::Acknowledge(acknowledge) => todo!(),
+                    Packet::PeerFound(peer_found) => todo!(),
+                    Packet::PeerExpired(peer_expired) => todo!(),
+                    Packet::PeerPairRequest(peer_pair_request) => {
+                      info!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&peer_pair_request.peer).unwrap().peer_id);
+                      pending_requests.insert(peer_pair_request.id, Instant::now());
 
-                  pending_requests.insert(request.id, (channel, Instant::now()));
+                      daemon.send_packet(Packet::PeerPairRequest(peer_pair_request)).await;
+                      let _ = swarm.behaviour_mut().packet_protocol.send_response(channel, ());
+                    },
+                    Packet::PeerPairResponse(peer_pair_response) => {
+                      info!("Received paring response: id = {}, res = {:?}", peer_pair_response.req_id, peer_pair_response.accepted);
 
-                  daemon.send_packet(Packet::PeerPairRequest(request)).await;
-
+                      if pending_requests.get(&peer_pair_response.req_id).is_some() {
+                        if peer_pair_response.accepted {
+                          let peer = bincode::deserialize::<Peer>(&peer_pair_response.peer).unwrap();
+                          keystore.store_peer(peer.peer_id, peer);
+                        }
+                        daemon.send_packet(Packet::PeerPairResponse(peer_pair_response)).await;
+                      };
+                      let _ = swarm.behaviour_mut().packet_protocol.send_response(channel, ());
+                    },
+                    Packet::TransferStart(transfer_start) => todo!(),
+                    Packet::TransferChunk(transfer_chunk) => todo!(),
+                    Packet::TransferEnd(transfer_end) => todo!(),
+                    Packet::TransferStatus(transfer_status) => todo!(),
+                    Packet::SmsMessage(sms_message) => todo!(),
+                    Packet::Notify(notification) => todo!(),
+                  }
                 },
-                request_response::Message::Response { request_id, response } => {
-                  info!("Received paring response: id = {}, res = {:?}", request_id, response);
-
-                  if pending_requests.get(&response.req_id).is_some() {
-                    if response.accepted {
-                      let peer = bincode::deserialize::<Peer>(&response.peer).unwrap();
-                      keystore.store_peer(peer.peer_id, peer);
-                    }
-                    daemon.send_packet(Packet::PeerPairResponse(response)).await;
-                    // swarm.behaviour_mut().stream;
-                  };
-                },
+                request_response::Message::Response { request_id: _, response: _ } => (),
               }
             }
 
@@ -163,11 +172,13 @@ impl NetworkManager {
               Ok(Packet::PeerPairRequest(packet)) => {
                 let peer = bincode::deserialize::<Peer>(&packet.peer).unwrap();
                 debug!("Sending pair request to: {}", peer.peer_id);
-                swarm.behaviour_mut().pairing.send_request(&peer.peer_id, packet);
+                let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer.peer_id, Packet::PeerPairRequest(packet));
               },
               Ok(Packet::PeerPairResponse(packet)) => {
-                if let Some((ch, _)) = pending_requests.remove(&packet.req_id) {
-                  let _ = swarm.behaviour_mut().pairing.send_response(ch, packet);
+                let peer = bincode::deserialize::<Peer>(&packet.peer).unwrap();
+
+                if let Some(_) = pending_requests.remove(&packet.req_id) {
+                  let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer.peer_id , Packet::PeerPairResponse(packet));
                 }
               },
               Ok(_) => {}
@@ -181,7 +192,7 @@ impl NetworkManager {
           },
 
           _ = timeout.tick() => {
-            pending_requests.retain(|_, (_, instant)| instant.elapsed().as_secs() < 60);
+            pending_requests.retain(|_, instant| instant.elapsed().as_secs() < 60);
           }
         }
       }

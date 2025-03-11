@@ -4,7 +4,7 @@ use generated::multiconnect::{peer::*, sms::*, transfer::*, *};
 
 use libp2p::{Multiaddr, PeerId};
 use log::{debug, error, trace};
-use prost::Message;
+use prost::{bytes::BufMut, Message};
 use thiserror::Error;
 use uid::IdU32;
 
@@ -86,37 +86,25 @@ impl Packet {
   /// Convert a [`Packet`] to bytes as a [`Vec<u8>`]
   pub fn to_bytes(packet: &Packet) -> Result<Vec<u8>, PacketError> {
     let mut buf = Vec::new();
+
+    fn encode_packet<M: Message>(buf: &mut Vec<u8>, packet_type: u8, data: &M) -> Result<(), PacketError> {
+      buf.push(packet_type);
+      data.encode(buf).map_err(|_| PacketError::EncodeError)
+    }
+
     match packet {
-      Packet::Ping(ping) => {
-        buf.push(0);
-        ping.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::Acknowledge(acknowledge) => {
-        buf.push(1);
-        acknowledge.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::PeerFound(peer_found) => {
-        buf.push(2);
-        peer_found.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::PeerExpired(peer_expired) => {
-        buf.push(3);
-        peer_expired.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::PeerPairRequest(peer_pair_request) => {
-        buf.push(4);
-        peer_pair_request.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::PeerPairResponse(peer_pair_response) => {
-        buf.push(5);
-        peer_pair_response.encode(&mut buf).map_err(|_| PacketError::EncodeError)?;
-      }
-      Packet::TransferStart(transfer_start) => todo!(),
-      Packet::TransferChunk(transfer_chunk) => todo!(),
-      Packet::TransferEnd(transfer_end) => todo!(),
-      Packet::TransferStatus(transfer_status) => todo!(),
-      Packet::SmsMessage(sms_message) => todo!(),
-      Packet::Notify(notify) => todo!(),
+      Packet::Ping(ping) => encode_packet(&mut buf, 0, ping)?,
+      Packet::Acknowledge(acknowledge) => encode_packet(&mut buf, 1, acknowledge)?,
+      Packet::PeerFound(peer_found) => encode_packet(&mut buf, 2, peer_found)?,
+      Packet::PeerExpired(peer_expired) => encode_packet(&mut buf, 3, peer_expired)?,
+      Packet::PeerPairRequest(peer_pair_request) => encode_packet(&mut buf, 4, peer_pair_request)?,
+      Packet::PeerPairResponse(peer_pair_response) => encode_packet(&mut buf, 5, peer_pair_response)?,
+      Packet::TransferStart(transfer_start) => encode_packet(&mut buf, 6, transfer_start)?,
+      Packet::TransferChunk(transfer_chunk) => encode_packet(&mut buf, 7, transfer_chunk)?,
+      Packet::TransferEnd(transfer_end) => encode_packet(&mut buf, 8, transfer_end)?,
+      Packet::TransferStatus(transfer_status) => encode_packet(&mut buf, 9, transfer_status)?,
+      Packet::SmsMessage(sms_message) => encode_packet(&mut buf, 10, sms_message)?,
+      Packet::Notify(notify) => encode_packet(&mut buf, 11, notify)?,
     }
     if buf.len() > u16::MAX.into() {
       return Err(PacketError::InvalidPacket("Packet is too big".into()));
