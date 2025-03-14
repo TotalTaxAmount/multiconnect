@@ -1,17 +1,11 @@
 use async_trait::async_trait;
-use bincode::de;
 use libp2p::{
   futures::{io, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-  request_response, StreamProtocol,
+  request_response,
 };
 
 use log::debug;
-use multiconnect_protocol::{
-  peer::{PeerPairRequest, PeerPairResponse},
-  Packet,
-};
-
-use prost::Message;
+use multiconnect_protocol::Packet;
 
 #[derive(Clone, Default)]
 pub(crate) struct PacketCodec;

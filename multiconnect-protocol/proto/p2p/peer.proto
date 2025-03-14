@@ -1,0 +1,19 @@
+syntax = "proto2";
+package multiconnect.p2p.peer;
+
+message P2PeerPairRequest {
+  // The packet id
+  required uint32 id = 1;
+  // The peer *id* of the target
+  required bytes target_id = 2;
+}
+
+message P3PeerPairResponse {
+  // The packet id
+  required uint32 id = 1;
+  // The peer that accepted the pair rq
+  required uint32 req_id = 2;
+  // If the pair request is accepted or not
+  required bool accepted = 3;
+}
+

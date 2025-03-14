@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package multiconnect.shared;
+
+message S0Notification {
+  required uint32 id = 1;
+}

@@ -4,7 +4,7 @@ mod daemon;
 use controller::Controller;
 use daemon::Daemon;
 use multiconnect_protocol::{
-  peer::{PeerPairRequest, PeerPairResponse},
+  local::peer::{L2PeerPairRequest, L3PeerPairResponse},
   Packet, Peer,
 };
 use tauri::{async_runtime, Manager, State};
@@ -37,17 +37,12 @@ pub fn run() {
 
 #[tauri::command]
 async fn send_pairing_request(controller: State<'_, Controller>, peer: Peer) -> Result<(), ()> {
-  controller.send_packet(Packet::PeerPairRequest(PeerPairRequest::new(&peer))).await;
+  controller.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&peer.peer_id))).await;
   Ok(())
 }
 
 #[tauri::command]
-async fn send_pairing_response(
-  controller: State<'_, Controller>,
-  accepted: bool,
-  req_id: u32,
-  peer: Peer,
-) -> Result<(), ()> {
-  controller.send_packet(Packet::PeerPairResponse(PeerPairResponse::new(accepted, req_id, &peer))).await;
+async fn send_pairing_response(controller: State<'_, Controller>, accepted: bool, req_id: u32) -> Result<(), ()> {
+  controller.send_packet(Packet::L3PeerPairResponse(L3PeerPairResponse::new(accepted, req_id))).await;
   Ok(())
 }

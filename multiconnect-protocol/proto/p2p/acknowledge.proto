@@ -1,0 +1,11 @@
+syntax = "proto2";
+package multiconnect.p2p;
+
+// Acknowledge a request
+// TODO: Remove?
+message P1Acknowledge {
+  // The packet id
+  required uint32 id = 1;
+  // Id for the packet being acknowledged
+  required uint32 req_id = 2;
+}

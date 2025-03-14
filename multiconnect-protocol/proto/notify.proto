@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-package multiconnect;
-
-message Notification {
-  uint32 id = 1;
-}

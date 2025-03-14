@@ -1,7 +1,0 @@
-syntax = "proto3";
-package multiconnect;
-
-message Acknowledge {
-  uint32 id = 1;
-  uint32 req_id = 2;
-}

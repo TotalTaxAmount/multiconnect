@@ -19,14 +19,14 @@ impl Controller {
         // let mut locked = daemon_clone.lock().await;
         if let Some(res) = stream.next().await {
           match res {
-            Ok(Packet::PeerFound(packet)) => {
+            Ok(Packet::L0PeerFound(packet)) => {
               let _ = app.emit("peer-found", bincode::deserialize::<Peer>(&packet.peer).unwrap());
             }
-            Ok(Packet::PeerExpired(packet)) => {
+            Ok(Packet::L1PeerExpired(packet)) => {
               let _ = app.emit("peer-expired", packet.peer_id);
             }
-            Ok(Packet::PeerPairRequest(packet)) => {
-              let _ = app.emit("pair-request", (&packet.id, bincode::deserialize::<Peer>(&packet.peer).unwrap()));
+            Ok(Packet::L2PeerPairRequest(packet)) => {
+              let _ = app.emit("pair-request", (&packet.id, bincode::deserialize::<Peer>(&packet.peer_id).unwrap()));
             }
             Ok(_) | Err(_) => {}
           }

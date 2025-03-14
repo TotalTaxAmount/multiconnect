@@ -1,35 +1,29 @@
 mod protocols;
 mod store;
 
-use std::{
-  collections::{HashMap, HashSet},
-  error::Error,
-  hash::Hash,
-  io,
-  time::Duration,
-};
+use std::{collections::HashMap, error::Error, io, time::Duration};
 
 use libp2p::{
-  futures::{channel::mpsc, StreamExt},
-  identify,
-  identity::{self, Keypair},
+  futures::StreamExt,
+  identity::Keypair,
   mdns, noise,
-  request_response::{self, Config, ProtocolSupport, ResponseChannel},
-  swarm::{NetworkBehaviour, OneShotHandler, OneShotHandlerConfig, SubstreamProtocol, SwarmEvent},
-  tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol, SwarmBuilder,
+  request_response::{self, Config, ProtocolSupport},
+  swarm::{NetworkBehaviour, SwarmEvent},
+  tcp, yamux, Multiaddr, PeerId, SwarmBuilder,
 };
 use log::{debug, error, info, trace, warn};
 use multiconnect_config::CONFIG;
 use multiconnect_protocol::{
-  peer::{PeerExpired, PeerFound},
+  local::peer::{L0PeerFound, L1PeerExpired, L2PeerPairRequest},
+  p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   Packet, Peer,
 };
 use protocols::PacketCodec;
 use store::Store;
 use tokio::{
-  fs::{File, OpenOptions},
+  fs::File,
   io::{AsyncReadExt, AsyncWriteExt},
-  time::{interval, Instant, Interval},
+  time::{interval, Instant},
 };
 use tracing_subscriber::EnvFilter;
 
@@ -64,7 +58,7 @@ impl NetworkManager {
   pub async fn start(daemon: SharedDaemon) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
-    let mut pending_requests: HashMap<u32, Instant> = HashMap::new();
+    let mut pending_requests: HashMap<u32, (Instant, Peer)> = HashMap::new();
     let mut timeout = interval(Duration::from_secs(30));
 
     let mut peers: HashMap<PeerId, Peer> = HashMap::new();
@@ -110,7 +104,7 @@ impl NetworkManager {
                 let peer = Peer { peer_id, multiaddr: multiaddr.clone() };
                 peers.insert(peer_id, peer.clone());
 
-                daemon.send_packet(Packet::PeerFound(PeerFound::new(peer))).await;
+                daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(peer))).await;
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Expired(expired))) => {
@@ -119,43 +113,39 @@ impl NetworkManager {
 
                 peers.remove(&peer_id);
 
-                daemon.send_packet(Packet::PeerExpired(PeerExpired::new(&peer_id))).await
+                daemon.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(request_response::Event::Message { peer, connection_id, message })) => {
+              let source = peer;
               match message {
                 request_response::Message::Request { request_id: _, request, channel } => {
                   debug!("Received multiconnect protocol event from {}", peer);
                   match request {
-                    Packet::Ping(ping) => todo!(),
-                    Packet::Acknowledge(acknowledge) => todo!(),
-                    Packet::PeerFound(peer_found) => todo!(),
-                    Packet::PeerExpired(peer_expired) => todo!(),
-                    Packet::PeerPairRequest(peer_pair_request) => {
-                      info!("Received pairing request from {:?}", bincode::deserialize::<Peer>(&peer_pair_request.peer).unwrap().peer_id);
-                      pending_requests.insert(peer_pair_request.id, Instant::now());
+                    Packet::P0Ping(ping) => todo!(),
+                    Packet::P1Acknowledge(acknowledge) => todo!(),
+                    Packet::P2PeerPairRequest(peer_pair_request) => {
+                      info!("Received pairing request from {:?}", source);
 
-                      daemon.send_packet(Packet::PeerPairRequest(peer_pair_request)).await;
+                      daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&source))).await;
                       let _ = swarm.behaviour_mut().packet_protocol.send_response(channel, ());
                     },
-                    Packet::PeerPairResponse(peer_pair_response) => {
+                    Packet::P3PeerPairResponse(peer_pair_response) => {
                       info!("Received paring response: id = {}, res = {:?}", peer_pair_response.req_id, peer_pair_response.accepted);
 
-                      if pending_requests.get(&peer_pair_response.req_id).is_some() {
-                        if peer_pair_response.accepted {
-                          let peer = bincode::deserialize::<Peer>(&peer_pair_response.peer).unwrap();
-                          keystore.store_peer(peer.peer_id, peer);
-                        }
-                        daemon.send_packet(Packet::PeerPairResponse(peer_pair_response)).await;
-                      };
+                      // if pending_requests.remove(&peer_pair_response.req_id).is_some() {
+                      //   debug!("Successfully found request for response");
+                      //   if peer_pair_response.accepted {
+                      //     // let peer = bincode::deserialize::<Peer>(&peer_pair_response.a).unwrap();
+                      //     // keystore.store_peer(peer.peer_id, peer);
+                      //   }
+                        // daemon.send_packet(Packet::PeerPairResponse(peer_pair_response)).await;
+
                       let _ = swarm.behaviour_mut().packet_protocol.send_response(channel, ());
                     },
-                    Packet::TransferStart(transfer_start) => todo!(),
-                    Packet::TransferChunk(transfer_chunk) => todo!(),
-                    Packet::TransferEnd(transfer_end) => todo!(),
-                    Packet::TransferStatus(transfer_status) => todo!(),
-                    Packet::SmsMessage(sms_message) => todo!(),
-                    Packet::Notify(notification) => todo!(),
+                    _ => {
+                      warn!("Received unexpected packet over network")
+                    }
                   }
                 },
                 request_response::Message::Response { request_id: _, response: _ } => (),
@@ -169,17 +159,20 @@ impl NetworkManager {
 
           packet = packet_stream.next() => if let Some(p) = packet {
             match p {
-              Ok(Packet::PeerPairRequest(packet)) => {
-                let peer = bincode::deserialize::<Peer>(&packet.peer).unwrap();
-                debug!("Sending pair request to: {}", peer.peer_id);
-                let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer.peer_id, Packet::PeerPairRequest(packet));
-              },
-              Ok(Packet::PeerPairResponse(packet)) => {
-                let peer = bincode::deserialize::<Peer>(&packet.peer).unwrap();
+              Ok(Packet::L2PeerPairRequest(packet)) => {
+                let peer_id = bincode::deserialize::<PeerId>(&packet.peer_id).unwrap();
+                debug!("Sending pair request to: {}", peer_id);
+                // pending_requests.insert(packet.id, (Instant::now(), peer_id));
 
-                if let Some(_) = pending_requests.remove(&packet.req_id) {
-                  let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer.peer_id , Packet::PeerPairResponse(packet));
-                }
+                let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer_id, Packet::P2PeerPairRequest(P2PeerPairRequest::new(&peer_id)));
+              },
+              Ok(Packet::L3PeerPairResponse(packet)) => {
+                debug!("Hello");
+                // if let Some((_, peer)) = pending_requests.get(&packet.req_id) {
+                //   debug!("Peer: {:?}", peer);
+
+                //   let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer.peer_id , Packet::P3PeerPairResponse(P3PeerPairResponse::new(&peer, packet.accepted)));
+                // }
               },
               Ok(_) => {}
               Err(e) => {
@@ -192,7 +185,7 @@ impl NetworkManager {
           },
 
           _ = timeout.tick() => {
-            pending_requests.retain(|_, instant| instant.elapsed().as_secs() < 60);
+            pending_requests.retain(|_, (instant, _)| instant.elapsed().as_secs() < 60);
           }
         }
       }

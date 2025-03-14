@@ -1,0 +1,23 @@
+syntax = "proto2";
+package multiconnect.shared.peer;
+
+// Different device types
+enum DeviceType {
+  ANDROID = 0;
+  LAPTOP = 1;
+  DESKTOP = 2;
+}
+
+// Used to request additional info about a device
+message S1PeerMeta {
+  // The packet id
+  required uint32 id = 1;
+  // The name of the OS
+  required string os_name = 2;
+  // The name (hostname) of the device
+  required string device_name = 3;
+  // The version of multiconnect the device is running
+  required string mc_version = 4;
+  // The type of device
+  required DeviceType type = 5;
+}

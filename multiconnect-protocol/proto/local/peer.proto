@@ -1,0 +1,36 @@
+syntax = "proto2";
+
+package multiconnect.local.peer;
+
+// Sent from the daemon to a client when a peer is found
+message L0PeerFound {
+  // The packet id
+  required uint32 id = 1;
+  // The peer id of the discovered peer
+  required bytes peer = 2;
+}
+
+// Send from the daemon to a client when a peer expires
+message L1PeerExpired {
+  // The packet id
+  required uint32 id = 1;
+  // The peer id of the expired peer
+  required string peer_id = 2;
+}
+
+// Send a request to pair with a peer
+message L2PeerPairRequest {
+  // The packet id
+  required uint32 id = 1;
+  // The peer *id* of the peer (when sending the target peer, when recv the peer that send the request)
+  required bytes peer_id = 2;
+}
+
+message L3PeerPairResponse {
+  // The packet id
+  required uint32 id = 1;
+  // The peer of the sender
+  required uint32 req_id = 2;
+  // If the pair request is accepted or not
+  required bool accepted = 3;
+}

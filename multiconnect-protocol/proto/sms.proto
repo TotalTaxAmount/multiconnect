@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-package multiconnect.sms;
-
-message SmsMessage {
-  uint32 id = 1;
-}

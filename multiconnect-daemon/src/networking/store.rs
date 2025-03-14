@@ -32,7 +32,7 @@ impl Store {
       return peers;
     } else {
       error!("Failed to read saved peers from file");
-      remove_file(path);
+      let _ = remove_file(path);
       return HashMap::new();
     }
   }

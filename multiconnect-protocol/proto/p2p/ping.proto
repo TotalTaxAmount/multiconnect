@@ -1,0 +1,8 @@
+syntax = "proto2";
+package multiconnect.p2p;
+
+// Ping a peer to see if it is alive
+message P0Ping {
+  // The packet id
+  required uint32 id = 1;
+}
