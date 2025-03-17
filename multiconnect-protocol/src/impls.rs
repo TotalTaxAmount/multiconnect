@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use bincode::de;
 use libp2p::PeerId;
 use uuid::Uuid;
@@ -41,7 +43,7 @@ impl L4Refresh {
 }
 
 impl L0PeerFound {
-  pub fn new(device: Device) -> Self {
+  pub fn new(device: &Device) -> Self {
     Self { id: Packet::create_id(), device: bincode::serialize(&device).unwrap() }
   }
 }
@@ -67,5 +69,14 @@ impl L3PeerPairResponse {
 impl S1PeerMeta {
   pub fn new(os_name: String, device_name: String, mc_version: String, device_type: DeviceType) -> Self {
     Self { id: Packet::create_id(), os_name, device_name, mc_version, device_type: device_type.into() }
+  }
+
+  pub fn from_device(device: &Device) -> Self {
+    Self::new(
+      device.os_name.to_string(),
+      device.device_name.to_string(),
+      device.mc_version.to_string(),
+      device.device_type,
+    )
   }
 }

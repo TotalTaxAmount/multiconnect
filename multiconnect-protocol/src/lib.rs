@@ -47,15 +47,15 @@ pub struct Peer {
 /// Device struct containing a peer and metadata about the device
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Device<'a> {
+pub struct Device {
   /// The peer *id* of the device on the network
   pub peer: PeerId,
   /// The string name of the device's os
-  pub os_name: &'a str,
+  pub os_name: String,
   /// The string name of the device (hostname by default)
-  pub device_name: &'a str,
+  pub device_name: String,
   /// The version of multiconnect in use
-  pub mc_version: &'a str,
+  pub mc_version: String,
   /// The type of device
   pub device_type: DeviceType,
 }
@@ -67,15 +67,27 @@ impl Peer {
   }
 }
 
-impl<'a> Device<'a> {
-  pub fn new(
-    peer: PeerId,
-    os_name: &'a str,
-    device_name: &'a str,
-    mc_version: &'a str,
-    device_type: DeviceType,
-  ) -> Self {
+impl Device {
+  pub fn new(peer: PeerId, os_name: String, device_name: String, mc_version: String, device_type: DeviceType) -> Self {
     Self { peer, os_name, device_name, mc_version, device_type }
+  }
+
+  pub fn this(local_peer_id: PeerId) -> Self {
+    let os_name = os_info::get().to_string();
+    let device_name = gethostname::gethostname().to_str().unwrap().to_string();
+    let mc_version = option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown");
+    let device_type = if is_laptop() {
+      DeviceType::Laptop
+    } else {
+      DeviceType::Desktop
+    };
+
+    Self::new(local_peer_id, os_name, device_name, mc_version.to_owned(), device_type)
+  }
+
+  pub fn from_meta(peer_meta: S1PeerMeta, peer_id: PeerId) -> Self {
+    let device_type = peer_meta.device_type();
+    Self::new(peer_id, peer_meta.os_name, peer_meta.device_name, peer_meta.mc_version, device_type)
   }
 }
 
@@ -149,6 +161,8 @@ impl Packet {
       6 => Ok(Packet::L2PeerPairRequest(L2PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       7 => Ok(Packet::L3PeerPairResponse(L3PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       8 => Ok(Packet::L4Refresh(L4Refresh::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      9 => Ok(Packet::S1PeerMeta(S1PeerMeta::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+
       _ => {
         error!("Unknown packet type {}", packet_type);
         Err(PacketError::InvalidPacket("Unknown packet type".into()))
@@ -186,6 +200,38 @@ impl Packet {
     };
     Ok(())
   }
+}
+
+#[cfg(target_os = "linux")]
+fn is_laptop() -> bool {
+  use std::fs;
+  let power_supply_path = "/sys/class/power_supply/";
+  if let Ok(entries) = fs::read_dir(power_supply_path) {
+    for entry in entries.flatten() {
+      let filename = entry.file_name();
+      if filename.to_string_lossy().starts_with("BAT") {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+#[cfg(target_os = "windows")]
+fn is_laptop() -> bool {
+  use serde::Deserialize;
+  use wmi::{COMLibrary, WMIConnection};
+
+  #[derive(Deserialize, Debug)]
+  struct Win32_Battery {
+    Name: String,
+  }
+
+  let com_con = COMLibrary::new().expect("Failed to initialize COM");
+  let wmi_con = WMIConnection::new(com_con.into()).expect("Failed to connect to WMI");
+
+  let result: Vec<Win32_Battery> = wmi_con.query().unwrap_or_default();
+  !result.is_empty()
 }
 
 #[cfg(test)]

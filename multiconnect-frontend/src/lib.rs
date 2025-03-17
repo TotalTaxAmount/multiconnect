@@ -39,7 +39,7 @@ pub fn run() {
 /// Parameters:
 /// * `device` - The device to send the request to
 #[tauri::command]
-async fn send_pairing_request(controller: State<'_, Controller>, device: Device<'_>) -> Result<(), ()> {
+async fn send_pairing_request(controller: State<'_, Controller>, device: Device) -> Result<(), ()> {
   let uuid = Uuid::new_v4();
   controller.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await;
   Ok(())

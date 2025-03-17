@@ -18,7 +18,7 @@ use multiconnect_config::CONFIG;
 use multiconnect_protocol::{
   local::peer::{L0PeerFound, L1PeerExpired, L2PeerPairRequest},
   p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
-  shared::peer::DeviceType,
+  shared::peer::{DeviceType, S1PeerMeta},
   Device, Packet, Peer,
 };
 use protocols::PacketCodec;
@@ -74,6 +74,9 @@ impl NetworkManager {
     let keys = Self::get_keys().await?;
     let local_peer_id = keys.public().to_peer_id();
 
+    let this_device = Device::this(local_peer_id);
+    debug!("Current device: {:?}", this_device);
+
     let mut swarm = SwarmBuilder::with_existing_identity(keys.clone())
       .with_tokio()
       .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
@@ -105,10 +108,7 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
                 info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                let device = Device::new(peer_id, "os_name", "device_name", "mc_version", DeviceType::Laptop);
-                devices.insert(peer_id, device.clone());
-
-                daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(device))).await;
+                let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer_id, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Expired(expired))) => {
@@ -133,7 +133,7 @@ impl NetworkManager {
                       let uuid = Uuid::from_str(&peer_pair_request.req_uuid).unwrap();
                       pending_requests.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(peer_pair_request.clone()), packet_source));
 
-                      daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&Device::new(packet_source, "placeholder", "placeholder", "0.0.0-DEV", multiconnect_protocol::shared::peer::DeviceType::Android), uuid))).await; // TODO: Replace
+                      daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&Device::new(packet_source, "placeholder".to_string(), "placeholder".to_string(), "0.0.0-DEV".to_string(), multiconnect_protocol::shared::peer::DeviceType::Android), uuid))).await; // TODO: Replace
                     },
                     Packet::P3PeerPairResponse(peer_pair_response) => {
                       info!("Received paring response: id = {}, res = {:?}", peer_pair_response.req_uuid, peer_pair_response.accepted);
@@ -149,6 +149,13 @@ impl NetworkManager {
                         }
                       }
                     },
+                    Packet::S1PeerMeta(peer_meta) => {
+                      let device = Device::from_meta(peer_meta, packet_source);
+                      debug!("Received meta for device: {:?}", device);
+
+                      daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
+                      devices.insert(device.peer, device);
+                    }
                     _ => {
                       warn!("Received unexpected packet over network")
                     }
@@ -182,7 +189,7 @@ impl NetworkManager {
               },
               Ok(Packet::L4Refresh(_)) => {
                 for (_, device) in devices.iter() {
-                  daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(device.clone()))).await;
+                  daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                 }
               },
               Ok(_) => {},
@@ -196,7 +203,7 @@ impl NetworkManager {
           },
 
           _ = timeout.tick() => {
-            pending_requests.retain(|_, (instant, _, and_then)| instant.elapsed().as_secs() < 60);
+            pending_requests.retain(|_, (instant, _, _)| instant.elapsed().as_secs() < 60);
           }
         }
       }

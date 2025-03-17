@@ -21,6 +21,8 @@
       yarn
       protobuf_27
 #      openssl_3
+      lsb-release
+      nixfmt-rfc-style
 
       # Tauri
       cargo-tauri
