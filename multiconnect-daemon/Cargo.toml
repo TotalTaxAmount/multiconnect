@@ -23,6 +23,6 @@ prost = "0.13"
 tokio-stream = { version = "0.1.17", features = [ "sync" ] }
 port_check = "0.2.1"
 libp2p-stream = "0.3.0-alpha"
-tokio-util = { version = "0.7.13", features = [ "codec", "compat"]}
+tokio-util = { version = "0.7.14", features = [ "codec", "compat"]}
 lazy_static = "1.5.0"
 uuid = "1.16.0"
