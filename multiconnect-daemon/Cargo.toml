@@ -18,7 +18,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4.26"
 pretty_env_logger = "0.5.0"
 bincode = "2.0.1"
-async-trait = "0.1.86"
+async-trait = "0.1.88"
 prost = "0.13"
 tokio-stream = { version = "0.1.17", features = [ "sync" ] }
 port_check = "0.2.1"
