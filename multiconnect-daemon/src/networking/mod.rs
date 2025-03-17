@@ -1,7 +1,13 @@
 mod protocols;
 mod store;
 
-use std::{collections::HashMap, error::Error, io, str::FromStr, time::Duration};
+use std::{
+  collections::{HashMap, HashSet},
+  error::Error,
+  io,
+  str::FromStr,
+  time::Duration,
+};
 
 use bincode::de;
 use lazy_static::lazy_static;
@@ -66,6 +72,7 @@ impl NetworkManager {
     let mut timeout = interval(Duration::from_secs(30));
 
     let mut devices: HashMap<PeerId, Device> = HashMap::new();
+    let mut discovered_peers: HashSet<PeerId> = HashSet::new();
 
     let mut keystore = Store::new();
 
@@ -107,8 +114,11 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
-                info!("Discoverd peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer_id, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
+                if !discovered_peers.contains(&peer_id) {
+                  info!("Discovered peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+                  let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer_id, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
+                  discovered_peers.insert(peer_id);
+                }
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Expired(expired))) => {
@@ -116,7 +126,7 @@ impl NetworkManager {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
 
                 devices.remove(&peer_id);
-
+                discovered_peers.remove(&peer_id);
                 daemon.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await
               }
             }
