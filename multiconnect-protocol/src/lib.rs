@@ -9,6 +9,7 @@ use generated::multiconnect::{
 use libp2p::{Multiaddr, PeerId};
 use log::{debug, error, trace};
 use prost::{bytes::BufMut, Message};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uid::IdU32;
 
@@ -44,15 +45,37 @@ pub struct Peer {
 }
 
 /// Device struct containing a peer and metadata about the device
-pub struct Device {
-  pub peer: Peer,
-  pub meta: S1PeerMeta,
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Device<'a> {
+  /// The peer *id* of the device on the network
+  pub peer: PeerId,
+  /// The string name of the device's os
+  pub os_name: &'a str,
+  /// The string name of the device (hostname by default)
+  pub device_name: &'a str,
+  /// The version of multiconnect in use
+  pub mc_version: &'a str,
+  /// The type of device
+  pub device_type: DeviceType,
 }
 
 impl Peer {
   /// Create a new peer
-  fn new(peer_id: PeerId, multiaddr: Multiaddr) -> Self {
+  pub fn new(peer_id: PeerId, multiaddr: Multiaddr) -> Self {
     Self { peer_id, multiaddr }
+  }
+}
+
+impl<'a> Device<'a> {
+  pub fn new(
+    peer: PeerId,
+    os_name: &'a str,
+    device_name: &'a str,
+    mc_version: &'a str,
+    device_type: DeviceType,
+  ) -> Self {
+    Self { peer, os_name, device_name, mc_version, device_type }
   }
 }
 
@@ -76,6 +99,8 @@ pub enum Packet {
   L2PeerPairRequest(L2PeerPairRequest),
   /// The pairing response from the peer (daemon -> client or client -> daemon)
   L3PeerPairResponse(L3PeerPairResponse),
+  /// Refresh packet
+  L4Refresh(L4Refresh),
   /// Get metadata about a peer
   S1PeerMeta(S1PeerMeta), // TODO
                           // TransferStart(TransferStart),
@@ -123,6 +148,7 @@ impl Packet {
       5 => Ok(Packet::L1PeerExpired(L1PeerExpired::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       6 => Ok(Packet::L2PeerPairRequest(L2PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       7 => Ok(Packet::L3PeerPairResponse(L3PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      8 => Ok(Packet::L4Refresh(L4Refresh::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       _ => {
         error!("Unknown packet type {}", packet_type);
         Err(PacketError::InvalidPacket("Unknown packet type".into()))
@@ -148,8 +174,9 @@ impl Packet {
       Packet::L1PeerExpired(peer_expired)                 => encode_packet(buf, 5, peer_expired)?,
       Packet::L2PeerPairRequest(peer_pair_request)    => encode_packet(buf, 6, peer_pair_request)?,
       Packet::L3PeerPairResponse(peer_pair_response) => encode_packet(buf, 7, peer_pair_response)?,
+      Packet::L4Refresh(refresh)                              => encode_packet(buf, 8, refresh)?,
       // Shared (daemon + client and p2p) packets
-      Packet::S1PeerMeta(peer_meta)                          => encode_packet(buf, 8, peer_meta)?,
+      Packet::S1PeerMeta(peer_meta)                          => encode_packet(buf, 9, peer_meta)?,
       // Packet::TransferStart(transfer_start) => encode_packet(&mut buf, 6, transfer_start)?,
       // Packet::TransferChunk(transfer_chunk) => encode_packet(&mut buf, 7, transfer_chunk)?,
       // Packet::TransferEnd(transfer_end) => encode_packet(&mut buf, 8, transfer_end)?,

@@ -2,6 +2,6 @@ syntax = "proto2";
 
 package multiconnect.local.sms;
 
-message L4SmsMessage {
+message L5SmsMessage {
   required uint32 id = 1;
 }

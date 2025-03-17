@@ -3302,6 +3302,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "tokio-stream",
+ "uuid",
 ]
 
 [[package]]
@@ -3319,6 +3320,7 @@ version = "0.0.0-DEV"
 dependencies = [
  "async-trait",
  "bincode",
+ "lazy_static",
  "libp2p",
  "libp2p-stream",
  "log",
@@ -3332,6 +3334,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -3350,6 +3353,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "uid",
+ "uuid",
 ]
 
 [[package]]
@@ -6338,11 +6342,11 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.11.1"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b913a3b5fe84142e269d63cc62b64319ccaf89b748fc31fe025177f767a756c4"
+checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 dependencies = [
- "getrandom 0.2.15",
+ "getrandom 0.3.1",
  "serde",
 ]
 

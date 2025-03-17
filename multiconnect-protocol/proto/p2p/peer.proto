@@ -4,15 +4,17 @@ package multiconnect.p2p.peer;
 message P2PeerPairRequest {
   // The packet id
   required uint32 id = 1;
-  // The peer *id* of the target
-  required bytes target_id = 2;
+  // The uuid of the pair request
+  required string req_uuid = 2;
+  // The target device
+  required bytes device = 3;
 }
 
 message P3PeerPairResponse {
   // The packet id
   required uint32 id = 1;
-  // The peer that accepted the pair rq
-  required uint32 req_id = 2;
+  // The uuid of the pair request
+  required string req_uuid = 2;
   // If the pair request is accepted or not
   required bool accepted = 3;
 }

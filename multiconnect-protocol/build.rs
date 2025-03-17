@@ -12,6 +12,7 @@ fn main() {
   let includes = &[PROTO_DIR];
 
   prost_build::Config::new()
+    .type_attribute(".", "#[derive(serde::Serialize,serde::Deserialize)]")
     .include_file("proto.rs")
     .compile_protos(&proto_files, includes)
     .expect("Failed to compile protos");

@@ -1,5 +1,5 @@
 use log::warn;
-use multiconnect_protocol::{Packet, Peer};
+use multiconnect_protocol::{Device, Packet, Peer};
 use tauri::{AppHandle, Emitter};
 use tokio_stream::StreamExt;
 
@@ -20,13 +20,16 @@ impl Controller {
         if let Some(res) = stream.next().await {
           match res {
             Ok(Packet::L0PeerFound(packet)) => {
-              let _ = app.emit("peer-found", bincode::deserialize::<Peer>(&packet.peer).unwrap());
+              let _ = app.emit("peer-found", bincode::deserialize::<Device>(&packet.device).unwrap());
             }
             Ok(Packet::L1PeerExpired(packet)) => {
               let _ = app.emit("peer-expired", packet.peer_id);
             }
             Ok(Packet::L2PeerPairRequest(packet)) => {
-              let _ = app.emit("pair-request", (&packet.id, bincode::deserialize::<Peer>(&packet.peer_id).unwrap()));
+              let _ = app.emit(
+                "pair-request",
+                (&packet.req_uuid.to_string(), bincode::deserialize::<Device>(&packet.device).unwrap()),
+              );
             }
             Ok(_) | Err(_) => {}
           }

@@ -1,27 +1,31 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
-  import type { Peer } from "../lib/types";
-  import { sendPairingRequest, sendPairingResponse } from "../lib/commands";
+  import { Device, DeviceType } from "../lib/types";
+  import {
+    refreshMdns,
+    sendPairingRequest,
+    sendPairingResponse,
+  } from "../lib/commands";
 
-  let peers: Map<string, Peer> = new Map<string, Peer>();
+  let devices: Map<string, Device> = new Map<string, Device>();
   let loading = true;
-  let pairingRequest: [number, Peer] | null = null;
+  let pairingRequest: [string, Device] | null = null;
 
-  listen<Peer>('peer-found', (event) => {
-    peers.set(event.payload.peer_id, event.payload);
-    console.debug(`Found a peer, id = ${event.payload.peer_id}`);
-    if (peers.size > 0 ) loading = false;
+  listen<Device>("peer-found", (event) => {
+    devices.set(event.payload.peer, event.payload);
+    console.debug(`Found a peer, id = ${event.payload.peer}`);
+    if (devices.size > 0) loading = false;
   });
 
-  listen<string>('peer-expired', (event) => {
+  listen<string>("peer-expired", (event) => {
     console.debug(`Peer expired, id = ${event.payload}`);
-    peers.delete(event.payload);
-    if (peers.size <= 0) loading = true;
+    devices.delete(event.payload);
+    if (devices.size <= 0) loading = true;
   });
 
-  listen<[number, Peer]>('pair-request', (event) => {
+  listen<[string, Device]>("pair-request", (event) => {
     pairingRequest = event.payload;
-    console.debug(`New pairing request from: ${pairingRequest?.[1].peer_id}`);
+    console.debug(`New pairing request from: ${pairingRequest?.[1].peer}`);
   });
 
   function closePopup() {
@@ -30,44 +34,58 @@
 
   function acceptPair() {
     if (!pairingRequest) return;
-    console.log(`Pairing with ${pairingRequest?.[1].peer_id}`);
-    sendPairingResponse(true, pairingRequest[0], pairingRequest[1]);
+    console.log(`Pairing with ${pairingRequest?.[1].peer}`);
+    sendPairingResponse(true, pairingRequest[0]);
     closePopup();
   }
 
   function rejectPair() {
     if (!pairingRequest) return;
-    console.log(`Rejected pair rq from ${pairingRequest?.[1].peer_id}`);
-    sendPairingResponse(false, pairingRequest[0], pairingRequest[1]);
+    console.log(`Rejected pair rq from ${pairingRequest?.[1].peer}`);
+    sendPairingResponse(false, pairingRequest[0]);
     closePopup();
   }
 </script>
 
 <main class="container">
   <h1 class="title">Peer List</h1>
-  <ul class="peer-list">
-    {#if loading}
-      <li class="spinner-container">
-        <div class="spinner"></div>
-      </li>
-    {:else}
-      {#each peers.values() as peer}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <li class="peer" on:click={() => sendPairingRequest(peer)}>
-          <strong>Peer ID:</strong> {peer.peer_id} <br />
-          <strong>Multiaddr:</strong> {peer.multiaddr}
+  <div class="discovery">
+    <ul class="peer-list">
+      {#if loading}
+        <li class="spinner-container">
+          <div class="spinner"></div>
         </li>
-      {/each}
-    {/if}
-  </ul>
+      {:else}
+        {#each devices.values() as device}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <li class="peer" on:click={() => sendPairingRequest(device)}>
+            <strong>Peer ID:</strong>
+            {device.peer}
+            {device.deviceName}
+            {device.osName}
+            {device.mcVersion}
+            {device.deviceType}
+          </li>
+        {/each}
+      {/if}
+    </ul>
+
+    <button on:click={() => refreshMdns()}>Refresh</button>
+  </div>
 
   {#if pairingRequest}
     <div class="popup">
       <div class="popup-content">
         <h2>Pairing Request</h2>
-        <p><strong>Peer ID:</strong> {pairingRequest[1].peer_id}</p>
-        <p><strong>Multiaddr:</strong> {pairingRequest[1].multiaddr}</p>
+        <p><strong>Peer ID:</strong> {pairingRequest[1].peer}</p>
+        <p>
+          <strong>Other shit:</strong>
+          {pairingRequest[1].deviceName}
+          {pairingRequest[1].osName}
+          {pairingRequest[1].mcVersion}
+          {pairingRequest[1].osName}
+        </p>
         <button on:click={acceptPair}>Accept</button>
         <button on:click={rejectPair} class="reject">Reject</button>
       </div>
@@ -79,6 +97,10 @@
   .container {
     font-size: 20px;
     padding: 20px;
+  }
+
+  .discovery {
+    display: block;
   }
 
   .title {

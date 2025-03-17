@@ -6,8 +6,8 @@ package multiconnect.local.peer;
 message L0PeerFound {
   // The packet id
   required uint32 id = 1;
-  // The peer id of the discovered peer
-  required bytes peer = 2;
+  // The device found
+  required bytes device = 2;
 }
 
 // Send from the daemon to a client when a peer expires
@@ -22,15 +22,24 @@ message L1PeerExpired {
 message L2PeerPairRequest {
   // The packet id
   required uint32 id = 1;
-  // The peer *id* of the peer (when sending the target peer, when recv the peer that send the request)
-  required bytes peer_id = 2;
+  // The request uuid
+  required string req_uuid = 2;
+  // The device in question (when sending the target peer, when recv the peer that send the request)
+  required bytes device = 3;
 }
 
+// A response to a pair request
 message L3PeerPairResponse {
   // The packet id
   required uint32 id = 1;
-  // The peer of the sender
-  required uint32 req_id = 2;
+  // The uuid of the request
+  required string req_uuid = 2;
   // If the pair request is accepted or not
   required bool accepted = 3;
+} 
+
+// Refresh mdns
+message L4Refresh {
+  // The packet id
+  required uint32 id = 1;
 }
