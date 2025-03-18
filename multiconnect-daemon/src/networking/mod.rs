@@ -15,8 +15,8 @@ use libp2p::{
   futures::StreamExt,
   identity::Keypair,
   mdns, noise,
-  request_response::{self, Config, ProtocolSupport},
-  swarm::{NetworkBehaviour, SwarmEvent},
+  request_response::{self, Config, OutboundRequestId, ProtocolSupport},
+  swarm::{ConnectionId, NetworkBehaviour, SwarmEvent},
   tcp, yamux, Multiaddr, PeerId, SwarmBuilder,
 };
 use log::{debug, error, info, trace, warn};
@@ -72,7 +72,6 @@ impl NetworkManager {
     let mut timeout = interval(Duration::from_secs(30));
 
     let mut devices: HashMap<PeerId, Device> = HashMap::new();
-    let mut discovered_peers: HashSet<PeerId> = HashSet::new();
 
     let mut keystore = Store::new();
 
@@ -112,12 +111,15 @@ impl NetworkManager {
             SwarmEvent::NewListenAddr { address, ..} => {
               info!("Multiconnect listing on {:?}", address);
             }
+            SwarmEvent::OutgoingConnectionError { connection_id, error, .. } => {
+              warn!("Connection failed for `{}` : {}", connection_id, error);
+            }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
-                if !discovered_peers.contains(&peer_id) {
-                  info!("Discovered peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+                info!("Discovered peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+                if local_peer_id > peer_id {
+                  debug!("Sending metadata to: {}", peer_id);
                   let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer_id, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
-                  discovered_peers.insert(peer_id);
                 }
               }
             }
@@ -126,11 +128,10 @@ impl NetworkManager {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
 
                 devices.remove(&peer_id);
-                discovered_peers.remove(&peer_id);
                 daemon.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await
               }
             }
-            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(request_response::Event::Message { peer, connection_id, message })) => {
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(request_response::Event::Message { peer, message, .. })) => {
               let packet_source = peer;
               match message {
                 request_response::Message::Request { request_id: _, request, channel } => {
@@ -162,6 +163,11 @@ impl NetworkManager {
                     Packet::S1PeerMeta(peer_meta) => {
                       let device = Device::from_meta(peer_meta, packet_source);
                       debug!("Received meta for device: {:?}", device);
+
+                      if local_peer_id < packet_source {
+                        debug!("Sending metadata to: {}", packet_source);
+                        let _ = swarm.behaviour_mut().packet_protocol.send_request(&packet_source, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
+                      }
 
                       daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                       devices.insert(device.peer, device);
