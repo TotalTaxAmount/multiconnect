@@ -1,15 +1,31 @@
-use multiconnect_daemon::{networking::NetworkManager, Daemon};
-use std::error::Error;
+use fern::colors::{Color, ColoredLevelConfig};
+use multiconnect_daemon::{networking::NetworkManager, Daemon, MulticonnectArgs};
+use std::{error::Error, str::FromStr, time::SystemTime};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-  if std::env::var("MC_LOG").is_err() {
-    std::env::set_var("MC_LOG", "info");
-  }
+  let args: MulticonnectArgs = argh::from_env();
 
-  pretty_env_logger::formatted_timed_builder().parse_env("MC_LOG").format_timestamp_secs().init();
+  let colors = ColoredLevelConfig::new().error(Color::Red).warn(Color::Yellow).info(Color::Green).debug(Color::Blue);
 
-  let daemon = Daemon::new().await?;
+  fern::Dispatch::new()
+    .format(move |out, message, record| {
+      let bold_start = "\u{001b}[1m"; // Bold
+      let reset = "\u{001b}[0m"; // Reset
+
+      out.finish(format_args!(
+        "{} [{}] [{bold_start}{}{reset}] > {}",
+        humantime::format_rfc3339(SystemTime::now()),
+        colors.color(record.level()),
+        record.target(),
+        message
+      ))
+    })
+    .level(log::LevelFilter::from_str(&args.log_level)?)
+    .chain(std::io::stdout())
+    .apply()?;
+
+  let daemon = Daemon::new(args.port).await?;
   NetworkManager::start(daemon.clone()).await?;
 
   let _ = daemon.start().await;

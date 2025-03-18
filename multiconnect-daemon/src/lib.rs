@@ -2,6 +2,7 @@ pub mod networking;
 
 use std::{sync::Arc, time::Duration};
 
+use argh::FromArgs;
 use log::{debug, error, info, trace};
 use multiconnect_protocol::Packet;
 use tokio::{
@@ -18,6 +19,18 @@ use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 pub type SharedDaemon = Arc<Daemon>;
 
 const PORT: u16 = 10999;
+
+#[derive(FromArgs)]
+#[argh(help_triggers("-h", "--help"))]
+/// Sync devices
+pub struct MulticonnectArgs {
+  /// specify the port of the daemon to run on (default 10999)
+  #[argh(option, default = "PORT", short = 'p')]
+  pub port: u16,
+  /// specify the log level (default is info) {trace|debug|info|warn|error}
+  #[argh(option, default = "String::from(\"info\")")]
+  pub log_level: String,
+}
 
 #[derive(Debug)]
 pub struct Daemon {
@@ -38,9 +51,7 @@ pub struct Daemon {
 // TODO: Clean all this up
 impl Daemon {
   /// Create a new daemon and bind too a port (`MC_PORT` env var)
-  pub async fn new() -> Result<SharedDaemon, std::io::Error> {
-    let port: u16 = std::env::var("MC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(PORT);
-
+  pub async fn new(port: u16) -> Result<SharedDaemon, std::io::Error> {
     let listener = match TcpListener::bind(format!("127.0.0.1:{}", port)).await {
       Ok(l) => l,
       Err(e) => {

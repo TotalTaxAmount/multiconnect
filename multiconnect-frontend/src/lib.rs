@@ -3,6 +3,7 @@ mod daemon;
 
 use std::str::FromStr;
 
+use argh::FromArgs;
 use controller::Controller;
 use daemon::Daemon;
 use multiconnect_protocol::{local::peer::*, Device, Packet, Peer};
@@ -10,13 +11,21 @@ use tauri::{async_runtime, Manager, State};
 use tokio::task;
 use uuid::Uuid;
 
+const PORT: u16 = 10999;
+
+#[derive(FromArgs)]
+#[argh(help_triggers("-h", "--help"))]
+/// Sync devices
+pub struct FrontendArgs {
+  /// specify the port of the daemon to connect to (default 10999)
+  #[argh(option, default = "PORT", short = 'p')]
+  pub port: u16,
+  /// specify the log level (default is info) {trace|debug|info|warn|error}
+  #[argh(option, default = "String::from(\"info\")")]
+  pub log_level: String,
+}
+
 pub fn run() {
-  if std::env::var("MC_LOG").is_err() {
-    std::env::set_var("MC_LOG", "info");
-  }
-
-  pretty_env_logger::formatted_timed_builder().parse_env("MC_LOG").format_timestamp_secs().init();
-
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .setup(|app| {
