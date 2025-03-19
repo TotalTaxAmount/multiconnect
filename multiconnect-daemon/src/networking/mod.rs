@@ -1,4 +1,3 @@
-mod protocols;
 mod store;
 
 use std::{
@@ -6,6 +5,7 @@ use std::{
   error::Error,
   io,
   str::FromStr,
+  sync::Arc,
   time::Duration,
 };
 
@@ -27,44 +27,23 @@ use multiconnect_protocol::{
   shared::peer::{DeviceType, S1PeerMeta},
   Device, Packet, Peer,
 };
-use protocols::PacketCodec;
 use store::Store;
 use tokio::{
   fs::File,
   io::{AsyncReadExt, AsyncWriteExt},
+  sync::RwLock,
   time::{interval, Instant},
 };
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use crate::SharedDaemon;
+use crate::{
+  modules::{McContext, McModule},
+  ModuleRegistration, MulticonnectBehavior, MulticonnectBehaviorEvent, SharedDaemon,
+};
 
-#[derive(NetworkBehaviour)]
-struct MulticonnectBehavior {
-  mnds: mdns::tokio::Behaviour,
-  packet_protocol: request_response::Behaviour<PacketCodec>,
-}
-
-impl MulticonnectBehavior {
-  pub fn new(key: &libp2p::identity::Keypair) -> Result<Self, Box<dyn Error>> {
-    let packet_protocol = request_response::Behaviour::<PacketCodec>::new(
-      vec![("/multiconnect/1".into(), ProtocolSupport::Full)],
-      Config::default(),
-    );
-
-    let mdns_config: mdns::Config = mdns::Config {
-      ttl: Duration::from_secs(5),
-      query_interval: std::time::Duration::from_secs(1),
-      ..Default::default()
-    };
-
-    Ok(Self { mnds: mdns::tokio::Behaviour::new(mdns_config, key.public().to_peer_id())?, packet_protocol })
-  }
-}
-
-pub struct NetworkManager {}
-
-impl NetworkManager {
+pub struct NetworkManager<'a> {}
+impl<'a> NetworkManager<'a> {
   pub async fn start(daemon: SharedDaemon) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
@@ -74,6 +53,14 @@ impl NetworkManager {
     let mut devices: HashMap<PeerId, Device> = HashMap::new();
 
     let mut keystore = Store::new();
+
+    let mut handlers: Vec<Arc<dyn McModule + std::marker::Send + Sync>> = Vec::new();
+
+    for reg in inventory::iter::<ModuleRegistration> {
+      let module = (reg.constructor)();
+      debug!("Registered module: {}", module.name());
+      handlers.push(module);
+    }
 
     debug!("Initializing new swarm");
 
@@ -103,6 +90,12 @@ impl NetworkManager {
       )));
     }
 
+    let swarm_arc = Arc::new(RwLock::new(swarm.behaviour_mut()));
+    let devices = Arc::new(RwLock::new(devices));
+
+    let daemon_clone = daemon.clone();
+    let mut context = McContext::new(swarm_arc, daemon_clone, devices);
+
     let _ = tokio::spawn(async move {
       let mut packet_stream = daemon.packet_stream();
       loop {
@@ -127,7 +120,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
 
-                devices.remove(&peer_id);
+                devices.write().await.remove(&peer_id);
                 daemon.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await
               }
             }
@@ -136,6 +129,9 @@ impl NetworkManager {
               match message {
                 request_response::Message::Request { request_id: _, request, channel } => {
                   debug!("Received multiconnect protocol event from {}", peer);
+                  for handle in handlers {
+                    handle.on_peer_packet(&packet_source, &request, &mut context);
+                  }
                   match request {
                     Packet::P0Ping(ping) => todo!(),
                     Packet::P1Acknowledge(acknowledge) => todo!(),
@@ -171,7 +167,7 @@ impl NetworkManager {
                       }
 
                       daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                      devices.insert(device.peer, device);
+                      devices.write().await.insert(device.peer, device);
                     }
                     _ => {
                       warn!("Received unexpected packet over network")
@@ -205,7 +201,7 @@ impl NetworkManager {
                 }
               },
               Ok(Packet::L4Refresh(_)) => {
-                for (_, device) in devices.iter() {
+                for (_, device) in devices.write().await.iter() {
                   daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                 }
               },

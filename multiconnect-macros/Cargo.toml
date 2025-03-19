@@ -1,0 +1,13 @@
+[package]
+name = "multiconnect-macros"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+name = "multiconnect_macros"
+path = "src/lib.rs"
+
+[dependencies]
+quote = "1.0.40"
+syn = { version = "2.0.100", features = ["full"] }

@@ -1,10 +1,19 @@
+pub mod modules;
 pub mod networking;
+pub mod protocols;
 
 use std::{sync::Arc, time::Duration};
 
 use argh::FromArgs;
+use libp2p::{
+  mdns,
+  request_response::{self, Config, ProtocolSupport},
+  swarm::NetworkBehaviour,
+};
 use log::{debug, error, info, trace};
+use modules::McModule;
 use multiconnect_protocol::Packet;
+use protocols::PacketCodec;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
@@ -30,6 +39,35 @@ pub struct MulticonnectArgs {
   /// specify the log level (default is info) {trace|debug|info|warn|error}
   #[argh(option, default = "String::from(\"info\")")]
   pub log_level: String,
+}
+
+pub struct ModuleRegistration {
+  pub constructor: fn() -> Arc<dyn McModule + Send + Sync>,
+}
+
+inventory::collect!(ModuleRegistration);
+
+#[derive(NetworkBehaviour)]
+struct MulticonnectBehavior {
+  mnds: mdns::tokio::Behaviour,
+  packet_protocol: request_response::Behaviour<PacketCodec>,
+}
+
+impl MulticonnectBehavior {
+  pub fn new(key: &libp2p::identity::Keypair) -> Result<Self, Box<dyn std::error::Error>> {
+    let packet_protocol = request_response::Behaviour::<PacketCodec>::new(
+      vec![("/multiconnect/1".into(), ProtocolSupport::Full)],
+      Config::default(),
+    );
+
+    let mdns_config: mdns::Config = mdns::Config {
+      ttl: Duration::from_secs(5),
+      query_interval: std::time::Duration::from_secs(1),
+      ..Default::default()
+    };
+
+    Ok(Self { mnds: mdns::tokio::Behaviour::new(mdns_config, key.public().to_peer_id())?, packet_protocol })
+  }
 }
 
 #[derive(Debug)]
