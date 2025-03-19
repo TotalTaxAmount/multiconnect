@@ -142,9 +142,10 @@ impl NetworkManager {
                     Packet::P2PeerPairRequest(peer_pair_request) => {
                       info!("Received pairing request from {:?}, req_id = {}", packet_source, peer_pair_request.req_uuid);
                       let uuid = Uuid::from_str(&peer_pair_request.req_uuid).unwrap();
+                      let device = bincode::deserialize::<Device>(&peer_pair_request.device).unwrap();
                       pending_requests.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(peer_pair_request.clone()), packet_source));
 
-                      daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&Device::new(packet_source, "placeholder".to_string(), "placeholder".to_string(), "0.0.0-DEV".to_string(), multiconnect_protocol::shared::peer::DeviceType::Android), uuid))).await; // TODO: Replace
+                      daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await; // TODO: Replace
                     },
                     Packet::P3PeerPairResponse(peer_pair_response) => {
                       info!("Received paring response: id = {}, res = {:?}", peer_pair_response.req_uuid, peer_pair_response.accepted);
