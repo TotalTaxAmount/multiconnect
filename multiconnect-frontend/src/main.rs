@@ -29,5 +29,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .chain(std::io::stdout())
     .apply()?;
 
-  Ok(multiconnect_lib::run())
+  Ok(multiconnect_lib::run(args.port))
 }

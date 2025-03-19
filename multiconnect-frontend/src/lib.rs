@@ -6,7 +6,7 @@ use std::str::FromStr;
 use argh::FromArgs;
 use controller::Controller;
 use daemon::Daemon;
-use multiconnect_protocol::{local::peer::*, Device, Packet, Peer};
+use multiconnect_protocol::{local::peer::*, Device, Packet};
 use tauri::{async_runtime, Manager, State};
 use tokio::task;
 use uuid::Uuid;
@@ -25,14 +25,14 @@ pub struct FrontendArgs {
   pub log_level: String,
 }
 
-pub fn run() {
+pub fn run(port: u16) {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .setup(|app| {
+    .setup(move |app| {
       let handle = app.handle();
       task::block_in_place(|| {
         async_runtime::block_on(async {
-          let daemon = Daemon::connect().await.unwrap();
+          let daemon = Daemon::connect(&port).await.unwrap();
           let controller = Controller::new(daemon, handle.clone()).await;
           app.manage(controller)
         })
