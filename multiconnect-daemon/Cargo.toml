@@ -29,7 +29,7 @@ multiconnect-protocol = { path = "../multiconnect-protocol" }
 multiconnect-config = { path = "../multiconnect-config" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4.26"
-bincode = "=2.0.1"
+bincode = "=1.3.3"
 async-trait = "0.1.86"
 prost = "0.13"
 tokio-stream = { version = "0.1.17", features = ["sync"] }
