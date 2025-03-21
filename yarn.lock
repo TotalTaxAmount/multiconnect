@@ -314,9 +314,9 @@
     vitefu "^1.0.4"
 
 "@tauri-apps/api@^2", "@tauri-apps/api@^2.0.0":
-  version "2.3.0"
-  resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-2.3.0.tgz#8ced2a5e5f1d30d585a22b11dff2cbdfa3f9eab2"
-  integrity sha512-33Z+0lX2wgZbx1SPFfqvzI6su63hCBkbzv+5NexeYjIx7WA9htdOKoRR7Dh3dJyltqS5/J8vQFyybiRoaL0hlA==
+  version "2.4.0"
+  resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-2.4.0.tgz#1b93976a129383ad914e979402431a63045c6329"
+  integrity sha512-F1zXTsmwcCp+ocg6fbzD/YL0OHeSG1eynCag1UNlX2tD5+dlXy7eRbTu9cAcscPjcR7Nix7by2wiv/+VfWUieg==
 
 "@tauri-apps/cli-darwin-arm64@2.3.1":
   version "2.3.1"
