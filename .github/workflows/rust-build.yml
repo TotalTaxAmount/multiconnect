@@ -29,7 +29,7 @@ jobs:
       - name: Build multiconnect-daemon
         working-directory: ./multiconnect-daemon
         run: |
-          cargo build
+          cargo build -- -A unused-imports -A unused-variables
 
   build-frontend:
     name: Build multiconnect-frontend
@@ -50,4 +50,4 @@ jobs:
       - name: Build multiconnect-frontend
         working-directory: ./multiconnect-frontend
         run: |
-          cargo build
+          cargo build -- -A unused-imports -A unused-variables
