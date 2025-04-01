@@ -32,9 +32,10 @@ use store::Store;
 use tokio::{
   fs::File,
   io::{AsyncReadExt, AsyncWriteExt},
-  sync::mpsc,
+  sync::{broadcast, mpsc},
   time::{interval, Instant},
 };
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
@@ -66,20 +67,18 @@ impl MulticonnectBehavior {
   }
 }
 
-pub struct NetworkManager {}
+pub struct NetworkManager {
+  send_packet_tx: mpsc::Sender<(PeerId, Packet)>,
+  recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
+  local_peer_id: PeerId,
+}
 
 impl NetworkManager {
-  pub async fn start(daemon: SharedDaemon, mut module_manager: ModuleManager) -> Result<(), Box<dyn Error>> {
+  pub async fn start() -> Result<Self, Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
     let (send_packet_tx, mut send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
-
-    let mut pending_requests: HashMap<Uuid, (Instant, Packet, PeerId)> = HashMap::new();
-    let mut timeout = interval(Duration::from_secs(30));
-
-    let mut devices: HashMap<PeerId, Device> = HashMap::new();
-
-    let mut keystore = Store::new();
+    let (recv_peer_packet_tx, mut recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
 
     debug!("Initializing new swarm");
 
@@ -109,10 +108,9 @@ impl NetworkManager {
       )));
     }
 
-    let _ = tokio::spawn(async move {
-      let mut packet_stream = daemon.packet_stream();
-      let mut mc_ctx = MulticonnectCtx::new(daemon.clone(), send_packet_tx);
+    // let mut mc_ctx = MulticonnectCtx::new(daemon.clone(), send_packet_tx, local_peer_id);
 
+    let _ = tokio::spawn(async move {
       loop {
         tokio::select! {
           event = swarm.select_next_some() => match event {
@@ -135,8 +133,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
 
-                devices.remove(&peer_id);
-                daemon.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await
+                // daemon.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(request_response::Event::Message { peer, message, .. })) => {
@@ -144,34 +141,31 @@ impl NetworkManager {
               match message {
                 request_response::Message::Request { request_id: _, request, channel } => {
                   debug!("Received multiconnect protocol event from {}", peer);
-                  if let Some(device) = devices.get(&packet_source) {
-                    module_manager.call_on_peer_packet(&device, request.clone(), &mut mc_ctx).await;
-                  }
-
+                  let _ = recv_peer_packet_tx.send((packet_source, request.clone()));
                   match request {
                     Packet::P0Ping(ping) => todo!(),
                     Packet::P1Acknowledge(acknowledge) => todo!(),
                     Packet::P2PeerPairRequest(peer_pair_request) => {
-                      info!("Received pairing request from {:?}, req_id = {}", packet_source, peer_pair_request.req_uuid);
-                      let uuid = Uuid::from_str(&peer_pair_request.req_uuid).unwrap();
-                      let device = bincode::deserialize::<Device>(&peer_pair_request.device).unwrap();
-                      pending_requests.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(peer_pair_request.clone()), packet_source));
+                      // info!("Received pairing request from {:?}, req_id = {}", packet_source, peer_pair_request.req_uuid);
+                      // let uuid = Uuid::from_str(&peer_pair_request.req_uuid).unwrap();
+                      // let device = bincode::deserialize::<Device>(&peer_pair_request.device).unwrap();
+                      // pending_requests.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(peer_pair_request.clone()), packet_source));
 
-                      daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await; // TODO: Replace
+                      // daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await; // TODO: Replace
                     },
                     Packet::P3PeerPairResponse(peer_pair_response) => {
-                      info!("Received paring response: id = {}, res = {:?}", peer_pair_response.req_uuid, peer_pair_response.accepted);
-                      let uuid = Uuid::from_str(&peer_pair_response.req_uuid).unwrap();
-                      debug!("uuid = {}, pending = {:?}", uuid, pending_requests);
-                      if let Some((_, Packet::L2PeerPairRequest(req), _)) = pending_requests.remove(&uuid) {
-                        debug!("Found a valid request for a response");
-                        if peer_pair_response.accepted {
-                          let device = bincode::deserialize::<Device>(&req.device).unwrap();
-                          info!("Successfully paired with: {}", device.peer);
-                        } else {
-                          info!("Pairing request denied")
-                        }
-                      }
+                      // info!("Received paring response: id = {}, res = {:?}", peer_pair_response.req_uuid, peer_pair_response.accepted);
+                      // let uuid = Uuid::from_str(&peer_pair_response.req_uuid).unwrap();
+                      // debug!("uuid = {}, pending = {:?}", uuid, pending_requests);
+                      // if let Some((_, Packet::L2PeerPairRequest(req), _)) = pending_requests.remove(&uuid) {
+                      //   debug!("Found a valid request for a response");
+                      //   if peer_pair_response.accepted {
+                      //     let device = bincode::deserialize::<Device>(&req.device).unwrap();
+                      //     info!("Successfully paired with: {}", device.peer);
+                      //   } else {
+                      //     info!("Pairing request denied")
+                      //   }
+                      // }
                     },
                     Packet::S1PeerMeta(peer_meta) => {
                       let device = Device::from_meta(peer_meta, packet_source);
@@ -182,8 +176,7 @@ impl NetworkManager {
                         let _ = swarm.behaviour_mut().packet_protocol.send_request(&packet_source, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
                       }
 
-                      daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                      devices.insert(device.peer, device);
+                      // daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                     }
                     _ => {
                       warn!("Received unexpected packet over network")
@@ -200,49 +193,14 @@ impl NetworkManager {
             }
           },
 
-          packet = packet_stream.next() => if let Some(p) = packet {
-            if let Ok(pack) = p.clone() { module_manager.call_on_frontend_packet(pack, &mut mc_ctx).await; }
-            match p {
-              Ok(Packet::L2PeerPairRequest(packet)) => { // Receive a request to pair to a peer from the frontend
-                let device = bincode::deserialize::<Device>(&packet.device).unwrap(); // Get the target peer to send the request to from the frontend
-                debug!("Sending pair request to: {}, id = {}", device.peer, packet.req_uuid);
-                let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-                pending_requests.insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), local_peer_id)); // Add the request to pending requests so we know if we get a response
-                let _ = swarm.behaviour_mut().packet_protocol.send_request(&device.peer, Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid))); // Send the request to the peer
-              },
-              Ok(Packet::L3PeerPairResponse(packet)) => { // Receive a response from the frontend to a pair request
-                let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-                if let Some((_, Packet::P2PeerPairRequest(_req), source)) = pending_requests.remove(&uuid) { // Check if there is a pending request for that id
-                  debug!("Sending back response");
-                  let _ = swarm.behaviour_mut().packet_protocol.send_request(&source, Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted))); // Send the response
-                }
-              },
-              Ok(Packet::L4Refresh(_)) => {
-                for (_, device) in devices.iter() {
-                  daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                }
-              },
-              Ok(_) | Err(_) => {
-                info!("Something bad happended");
-              }
-            }
-          } else {
-            warn!("Stream closed");
-            break;
-          },
-
           res = send_packet_rx.recv() => if let Some((target, packet)) = res {
             swarm.behaviour_mut().packet_protocol.send_request(&target, packet);
           },
-
-          _ = timeout.tick() => {
-            pending_requests.retain(|_, (instant, _, _)| instant.elapsed().as_secs() < 60);
-          }
         }
       }
     });
 
-    Ok(())
+    Ok(Self { send_packet_tx, recv_peer_packet_rx, local_peer_id })
   }
   /**
    * Get saved keys or generate new ones if they don't exist
@@ -268,6 +226,18 @@ impl NetworkManager {
     file.write_all(&encoded).await?;
 
     Ok(keypair)
+  }
+
+  pub fn get_local_peer_id(&self) -> PeerId {
+    self.local_peer_id
+  }
+
+  pub fn send_packet_channel(&self) -> mpsc::Sender<(PeerId, Packet)> {
+    self.send_packet_tx.clone()
+  }
+
+  pub fn recv_packet_channel(&self) -> broadcast::Receiver<(PeerId, Packet)> {
+    self.recv_peer_packet_rx.resubscribe()
   }
 }
 

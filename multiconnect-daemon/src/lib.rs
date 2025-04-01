@@ -183,17 +183,13 @@ impl Daemon {
     }
   }
 
-  /// Add a packet to the queue.
-  ///
-  /// Arguments:
-  /// * `packet` - A [`Packet`] to be sent (will be sent to all connected
-  ///   clients)
-  pub async fn send_packet(&self, packet: Packet) {
-    let _ = self.outgoing_tx.send(packet).await;
+  /// Get the stream for sending packets
+  pub fn send_packet_channel(&self) -> mpsc::Sender<Packet> {
+    self.outgoing_tx.clone()
   }
 
-  /// Get a stream of incoming packets
-  pub fn packet_stream(&self) -> impl tokio_stream::Stream<Item = Result<Packet, BroadcastStreamRecvError>> {
-    BroadcastStream::new(self.incoming_rx.resubscribe())
+  /// Get a channel for incoming packets
+  pub fn recv_packet_channel(&self) -> broadcast::Receiver<Packet> {
+    self.incoming_rx.resubscribe()
   }
 }
