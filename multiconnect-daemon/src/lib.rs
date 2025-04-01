@@ -1,3 +1,4 @@
+pub mod modules;
 pub mod networking;
 
 use std::{sync::Arc, time::Duration};

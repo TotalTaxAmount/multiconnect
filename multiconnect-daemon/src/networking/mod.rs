@@ -32,12 +32,16 @@ use store::Store;
 use tokio::{
   fs::File,
   io::{AsyncReadExt, AsyncWriteExt},
+  sync::mpsc,
   time::{interval, Instant},
 };
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use crate::SharedDaemon;
+use crate::{
+  modules::{ModuleManager, MulticonnectCtx},
+  SharedDaemon,
+};
 
 #[derive(NetworkBehaviour)]
 struct MulticonnectBehavior {
@@ -65,8 +69,10 @@ impl MulticonnectBehavior {
 pub struct NetworkManager {}
 
 impl NetworkManager {
-  pub async fn start(daemon: SharedDaemon) -> Result<(), Box<dyn Error>> {
+  pub async fn start(daemon: SharedDaemon, mut module_manager: ModuleManager) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
+
+    let (send_packet_tx, mut send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
 
     let mut pending_requests: HashMap<Uuid, (Instant, Packet, PeerId)> = HashMap::new();
     let mut timeout = interval(Duration::from_secs(30));
@@ -105,6 +111,8 @@ impl NetworkManager {
 
     let _ = tokio::spawn(async move {
       let mut packet_stream = daemon.packet_stream();
+      let mut mc_ctx = MulticonnectCtx::new(daemon.clone(), send_packet_tx);
+
       loop {
         tokio::select! {
           event = swarm.select_next_some() => match event {
@@ -136,6 +144,10 @@ impl NetworkManager {
               match message {
                 request_response::Message::Request { request_id: _, request, channel } => {
                   debug!("Received multiconnect protocol event from {}", peer);
+                  if let Some(device) = devices.get(&packet_source) {
+                    module_manager.call_on_peer_packet(&device, request.clone(), &mut mc_ctx).await;
+                  }
+
                   match request {
                     Packet::P0Ping(ping) => todo!(),
                     Packet::P1Acknowledge(acknowledge) => todo!(),
@@ -189,6 +201,7 @@ impl NetworkManager {
           },
 
           packet = packet_stream.next() => if let Some(p) = packet {
+            if let Ok(pack) = p.clone() { module_manager.call_on_frontend_packet(pack, &mut mc_ctx).await; }
             match p {
               Ok(Packet::L2PeerPairRequest(packet)) => { // Receive a request to pair to a peer from the frontend
                 let device = bincode::deserialize::<Device>(&packet.device).unwrap(); // Get the target peer to send the request to from the frontend
@@ -209,14 +222,17 @@ impl NetworkManager {
                   daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                 }
               },
-              Ok(_) => {},
-              Err(e) => {
-                error!("Error decoding packet: {}", e)
-              },
+              Ok(_) | Err(_) => {
+                info!("Something bad happended");
+              }
             }
           } else {
             warn!("Stream closed");
             break;
+          },
+
+          res = send_packet_rx.recv() => if let Some((target, packet)) = res {
+            swarm.behaviour_mut().packet_protocol.send_request(&target, packet);
           },
 
           _ = timeout.tick() => {

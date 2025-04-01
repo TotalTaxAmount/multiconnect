@@ -1,5 +1,9 @@
 use fern::colors::{Color, ColoredLevelConfig};
-use multiconnect_daemon::{networking::NetworkManager, Daemon, MulticonnectArgs};
+use multiconnect_daemon::{
+  modules::{ModuleManager, ModuleTest},
+  networking::NetworkManager,
+  Daemon, MulticonnectArgs,
+};
 use std::{error::Error, str::FromStr, time::SystemTime};
 
 #[tokio::main]
@@ -26,7 +30,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .apply()?;
 
   let daemon = Daemon::new(args.port).await?;
-  NetworkManager::start(daemon.clone()).await?;
+  let mut module_manager = ModuleManager::new();
+  module_manager.register(ModuleTest::new());
+
+  NetworkManager::start(daemon.clone(), module_manager).await?;
 
   let _ = daemon.start().await;
 
