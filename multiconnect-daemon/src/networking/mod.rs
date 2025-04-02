@@ -78,12 +78,13 @@ impl NetworkManager {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
     let (send_packet_tx, mut send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
-    let (recv_peer_packet_tx, mut recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
+    let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
 
     debug!("Initializing new swarm");
 
     let keys = Self::get_keys().await?;
     let local_peer_id = keys.public().to_peer_id();
+    let mut discovered_peers: Vec<PeerId> = Vec::new();
 
     let this_device = Device::this(local_peer_id);
     debug!("Current device: {:?}", this_device);
@@ -108,8 +109,6 @@ impl NetworkManager {
       )));
     }
 
-    // let mut mc_ctx = MulticonnectCtx::new(daemon.clone(), send_packet_tx, local_peer_id);
-
     let _ = tokio::spawn(async move {
       loop {
         tokio::select! {
@@ -122,10 +121,13 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mnds(mdns::Event::Discovered(discoverd))) => {
               for (peer_id, multiaddr) in discoverd {
-                info!("Discovered peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                if local_peer_id > peer_id {
-                  debug!("Sending metadata to: {}", peer_id);
-                  let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer_id, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
+                if !discovered_peers.contains(&peer_id) {
+                  discovered_peers.push(peer_id);
+                  info!("Discovered peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+                  if local_peer_id > peer_id {
+                    debug!("Sending metadata to: {}", peer_id);
+                    let _ = swarm.behaviour_mut().packet_protocol.send_request(&peer_id, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
+                  }
                 }
               }
             }
@@ -133,7 +135,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
 
-                // daemon.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await
+                let _ = recv_peer_packet_tx.send((this_device.peer, Packet::L1PeerExpired(L1PeerExpired::new(&peer_id)))); // Super non jank way to show the peer expired
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(request_response::Event::Message { peer, message, .. })) => {
@@ -142,60 +144,19 @@ impl NetworkManager {
                 request_response::Message::Request { request_id: _, request, channel } => {
                   debug!("Received multiconnect protocol event from {}", peer);
                   let _ = recv_peer_packet_tx.send((packet_source, request.clone()));
-                  match request {
-                    Packet::P0Ping(ping) => todo!(),
-                    Packet::P1Acknowledge(acknowledge) => todo!(),
-                    Packet::P2PeerPairRequest(peer_pair_request) => {
-                      // info!("Received pairing request from {:?}, req_id = {}", packet_source, peer_pair_request.req_uuid);
-                      // let uuid = Uuid::from_str(&peer_pair_request.req_uuid).unwrap();
-                      // let device = bincode::deserialize::<Device>(&peer_pair_request.device).unwrap();
-                      // pending_requests.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(peer_pair_request.clone()), packet_source));
-
-                      // daemon.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await; // TODO: Replace
-                    },
-                    Packet::P3PeerPairResponse(peer_pair_response) => {
-                      // info!("Received paring response: id = {}, res = {:?}", peer_pair_response.req_uuid, peer_pair_response.accepted);
-                      // let uuid = Uuid::from_str(&peer_pair_response.req_uuid).unwrap();
-                      // debug!("uuid = {}, pending = {:?}", uuid, pending_requests);
-                      // if let Some((_, Packet::L2PeerPairRequest(req), _)) = pending_requests.remove(&uuid) {
-                      //   debug!("Found a valid request for a response");
-                      //   if peer_pair_response.accepted {
-                      //     let device = bincode::deserialize::<Device>(&req.device).unwrap();
-                      //     info!("Successfully paired with: {}", device.peer);
-                      //   } else {
-                      //     info!("Pairing request denied")
-                      //   }
-                      // }
-                    },
-                    Packet::S1PeerMeta(peer_meta) => {
-                      let device = Device::from_meta(peer_meta, packet_source);
-                      debug!("Received meta for device: {:?}", device);
-
-                      if local_peer_id < packet_source {
-                        debug!("Sending metadata to: {}", packet_source);
-                        let _ = swarm.behaviour_mut().packet_protocol.send_request(&packet_source, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
-                      }
-
-                      // daemon.send_packet(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                    }
-                    _ => {
-                      warn!("Received unexpected packet over network")
-                    }
-                  };
                   let _ = swarm.behaviour_mut().packet_protocol.send_response(channel, ());
                 },
                 request_response::Message::Response { request_id: _, response: _ } => (),
               }
             }
-
             _ => {
               trace!("Event: {:?}", event);
-            }
+            },
           },
-
           res = send_packet_rx.recv() => if let Some((target, packet)) = res {
+            debug!("Sending {:?} to {}", packet, target);
             swarm.behaviour_mut().packet_protocol.send_request(&target, packet);
-          },
+          }
         }
       }
     });

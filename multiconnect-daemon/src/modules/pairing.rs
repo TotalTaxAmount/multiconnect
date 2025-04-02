@@ -55,6 +55,9 @@ impl MulticonnectModule for PairingModule {
           if peer_pair_response.accepted {
             let device = bincode::deserialize::<Device>(&req.device).unwrap();
             info!("Successfully paired with: {}", device.peer);
+            if let Some((_, paired)) = ctx.get_device_mut(&device.peer) {
+              *paired = true;
+            }
           } else {
             info!("Pairing request denied")
           }
@@ -73,17 +76,18 @@ impl MulticonnectModule for PairingModule {
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
         self
           .pending_requests
-          .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), *ctx.get_local_peer_id())); // Add the request to pending requests so we know if we get a response
+          .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer)); // Add the request to pending requests so we know if we get a response
         ctx.send_to_peer(device.peer, Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid))).await;
         // Send the request to the peer
       }
       Packet::L3PeerPairResponse(packet) => {
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+        // Check if there is a pending request for that id
         if let Some((_, Packet::P2PeerPairRequest(_req), source)) = self.pending_requests.remove(&uuid) {
-          // Check if there is a pending request for that id
           debug!("Sending back response");
-          let _ = ctx.send_to_peer(source, Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted)));
           // Send the response
+          let _ =
+            ctx.send_to_peer(source, Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted))).await;
         }
       }
       _ => {}

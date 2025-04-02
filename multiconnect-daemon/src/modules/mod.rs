@@ -1,11 +1,18 @@
+pub mod discovery;
 pub mod pairing;
 
 use async_trait::async_trait;
 use libp2p::PeerId;
-use log::info;
+use log::{debug, info};
 use multiconnect_protocol::{Device, Packet};
-use std::collections::HashMap;
-use tokio::sync::{broadcast, mpsc};
+use std::{
+  collections::HashMap,
+  sync::{Arc, RwLock},
+};
+use tokio::{
+  sync::{broadcast, mpsc, Mutex},
+  time::{self, Duration},
+};
 
 use crate::{networking::NetworkManager, SharedDaemon};
 
@@ -27,10 +34,10 @@ pub struct MulticonnectCtx {
   send_frontend_packet_tx: mpsc::Sender<Packet>,
   /// A mpsc channel to send packets to peers
   send_peer_packet_tx: mpsc::Sender<(PeerId, Packet)>,
-  /// The current devices local peer id
-  local_peer_id: PeerId,
-  /// A HashMap of PeerIds and corrosponding Devices
-  paired_devices: HashMap<PeerId, Device>,
+  /// A HashMap of PeerIds and corrosponding Devices and weather they are paired or not
+  devices: HashMap<PeerId, (Device, bool)>,
+  /// The current device
+  this_device: Device,
 }
 
 impl MulticonnectCtx {
@@ -38,9 +45,9 @@ impl MulticonnectCtx {
   pub fn new(
     send_frontend_packet_tx: mpsc::Sender<Packet>,
     packet_channel: mpsc::Sender<(PeerId, Packet)>,
-    local_peer_id: PeerId,
+    this_device: Device,
   ) -> Self {
-    Self { send_frontend_packet_tx, send_peer_packet_tx: packet_channel, local_peer_id, paired_devices: HashMap::new() }
+    Self { send_frontend_packet_tx, send_peer_packet_tx: packet_channel, this_device, devices: HashMap::new() }
   }
 
   /// Send a packet to the frontend
@@ -54,28 +61,31 @@ impl MulticonnectCtx {
   }
 
   /// Get the HashMap of paired devices
-  pub fn get_paired_devices(&self) -> &HashMap<PeerId, Device> {
-    &self.paired_devices
+  pub fn get_devices(&self) -> &HashMap<PeerId, (Device, bool)> {
+    &self.devices
   }
 
   /// Get a paired device
-  pub fn get_paired_device(&self, id: &PeerId) -> Option<&Device> {
-    self.paired_devices.get(id)
+  pub fn get_device(&self, id: &PeerId) -> Option<&(Device, bool)> {
+    self.devices.get(id)
   }
 
+  pub fn get_device_mut(&mut self, id: &PeerId) -> Option<&mut (Device, bool)> {
+    self.devices.get_mut(id)
+  }
   /// Add a device to the list of paired devices
-  pub fn add_paired_device(&mut self, device: Device) {
-    self.paired_devices.insert(device.peer, device);
+  pub fn add_device(&mut self, device: Device) {
+    self.devices.insert(device.peer, (device, false));
   }
 
   /// Remove a paired  device
-  pub fn remove_paired_device(&mut self, id: &PeerId) -> Option<Device> {
-    self.paired_devices.remove(id)
+  pub fn remove_device(&mut self, id: &PeerId) -> Option<(Device, bool)> {
+    self.devices.remove(id)
   }
 
   /// Get the local peer id
-  pub fn get_local_peer_id(&self) -> &PeerId {
-    &self.local_peer_id
+  pub fn get_this_device(&self) -> &Device {
+    &self.this_device
   }
 }
 
@@ -83,25 +93,24 @@ impl MulticonnectCtx {
 pub struct ModuleManager {
   /// A list of all registered modules
   modules: Vec<Box<dyn MulticonnectModule>>,
-  /// Context
-  mc_ctx: MulticonnectCtx,
   /// Reciver for packets coming from the frontend
   recv_frontend_packet_rx: broadcast::Receiver<Packet>,
   /// Reciver for packets coming from peers
   recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
+  /// Context that is shared between all modules
+  ctx: Arc<Mutex<MulticonnectCtx>>,
 }
 
 impl ModuleManager {
   /// Create a new module manager
   pub fn new(network_manager: NetworkManager, daemon: SharedDaemon) -> Self {
     Self {
+      ctx: Arc::new(Mutex::new(MulticonnectCtx::new(
+        daemon.send_packet_channel(),
+        network_manager.send_packet_channel(),
+        Device::this(network_manager.get_local_peer_id()),
+      ))),
       modules: Vec::new(),
-      mc_ctx: MulticonnectCtx {
-        send_frontend_packet_tx: daemon.send_packet_channel(),
-        send_peer_packet_tx: network_manager.send_packet_channel(),
-        local_peer_id: network_manager.get_local_peer_id(),
-        paired_devices: HashMap::new(),
-      },
       recv_frontend_packet_rx: daemon.recv_packet_channel(),
       recv_peer_packet_rx: network_manager.recv_packet_channel(),
     }
@@ -135,10 +144,28 @@ impl ModuleManager {
   }
 
   pub async fn start(&'static mut self) {
+    let ctx = self.ctx.clone();
+    let mut periodic_interval = time::interval(Duration::from_millis(20));
+
     tokio::spawn(async move {
       loop {
         tokio::select! {
-          event = self.recv_frontend_packet_rx.recv() => if let Ok(packet) = event {}
+          event = self.recv_frontend_packet_rx.recv() => if let Ok(packet) = event {
+            debug!("Calling on_frontend_packet");
+            let mut ctx = ctx.lock().await;
+            self.call_on_frontend_packet(packet, &mut ctx).await;
+          },
+
+          event = self.recv_peer_packet_rx.recv() => if let Ok((source, packet)) = event {
+            debug!("Calling on_peer_packet");
+            let mut ctx = ctx.lock().await;
+            self.call_on_peer_packet(source, packet, &mut ctx).await;
+          },
+
+          _ = periodic_interval.tick() => {
+            let mut ctx = ctx.lock().await;
+            self.call_perodic(&mut ctx).await;
+          }
         }
       }
     });

@@ -1,6 +1,6 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use multiconnect_daemon::{
-  modules::{pairing::PairingModule, ModuleManager, ModuleTest},
+  modules::{discovery::Discovery, pairing::PairingModule, ModuleManager, ModuleTest, MulticonnectCtx},
   networking::NetworkManager,
   Daemon, MulticonnectArgs,
 };
@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
   let network_manager = NetworkManager::start().await?;
   let module_manager = Box::leak(Box::new(ModuleManager::new(network_manager, daemon.clone())));
   module_manager.register(PairingModule::new());
+  module_manager.register(Discovery);
 
   module_manager.start().await;
   let _ = daemon.start().await;
