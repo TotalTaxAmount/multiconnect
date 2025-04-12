@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use libp2p::PeerId;
 use log::{debug, info};
 use multiconnect_protocol::{
-  local::peer::L2PeerPairRequest,
+  local::peer::{L2PeerPairRequest, L3PeerPairResponse},
   p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   Device, Packet,
 };
@@ -54,10 +54,13 @@ impl MulticonnectModule for PairingModule {
           debug!("Found a valid request for a response");
           if peer_pair_response.accepted {
             let device = bincode::deserialize::<Device>(&req.device).unwrap();
-            info!("Successfully paired with: {}", device.peer);
             if let Some((_, paired)) = ctx.get_device_mut(&device.peer) {
+              info!("Successfully paired with: {}", device.peer);
               *paired = true;
             }
+            ctx
+              .send_to_frontend(Packet::L3PeerPairResponse(L3PeerPairResponse::new(peer_pair_response.accepted, uuid)))
+              .await;
           } else {
             info!("Pairing request denied")
           }

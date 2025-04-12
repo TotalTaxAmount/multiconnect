@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use log::{debug, error, info, trace};
+use multiconnect_config::CONFIG;
 use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
@@ -27,6 +28,7 @@ pub struct Daemon {
 impl Daemon {
   /// Connect to the daemon and establish a [`TcpStream`]
   pub async fn connect(port: &u16) -> Result<SharedDaemon, Box<dyn std::error::Error>> {
+    CONFIG.get_config_dir();
     let socket = TcpSocket::new_v4()?;
     let stream = match socket.connect(format!("127.0.0.1:{}", port).parse()?).await {
       Ok(s) => s,
