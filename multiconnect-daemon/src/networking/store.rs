@@ -14,12 +14,12 @@ pub struct Store {
 }
 
 impl Store {
-  pub fn new() -> Self {
-    Self { peers: Self::load() }
+  pub async fn new() -> Self {
+    Self { peers: Self::load().await }
   }
 
-  fn load() -> HashMap<PeerId, Peer> {
-    let path = CONFIG.get_config_dir().join("saved");
+  async fn load() -> HashMap<PeerId, Peer> {
+    let path = CONFIG.read().await.get_config_dir().join("saved");
     if !path.exists() {
       return HashMap::new();
     }
@@ -37,8 +37,8 @@ impl Store {
     }
   }
 
-  fn save(&self) {
-    let file = CONFIG.get_config_dir().join("saved");
+  async fn save(&self) {
+    let file = CONFIG.read().await.get_config_dir().join("saved");
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(file).unwrap();
 
     let serialized = bincode::serialize(&self.peers).unwrap();

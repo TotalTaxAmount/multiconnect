@@ -6,6 +6,7 @@ use std::str::FromStr;
 use argh::FromArgs;
 use controller::Controller;
 use daemon::Daemon;
+use multiconnect_config::CONFIG;
 use multiconnect_protocol::{local::peer::*, Device, Packet};
 use tauri::{async_runtime, Manager, State};
 use tokio::task;
@@ -39,7 +40,13 @@ pub fn run(port: u16) {
       });
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![send_pairing_request, send_pairing_response, refresh_mdns])
+    .invoke_handler(tauri::generate_handler![
+      send_pairing_request,
+      send_pairing_response,
+      refresh_mdns,
+      set_theme,
+      get_theme
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
@@ -70,5 +77,18 @@ async fn send_pairing_response(controller: State<'_, Controller>, accepted: bool
 #[tauri::command]
 async fn refresh_mdns(controller: State<'_, Controller>) -> Result<(), ()> {
   controller.send_packet(Packet::L4Refresh(L4Refresh::new())).await;
+  Ok(())
+}
+
+#[tauri::command]
+async fn get_theme() -> Result<String, ()> {
+  Ok(CONFIG.read().await.get_config().frontend.theme.clone())
+}
+
+#[tauri::command]
+async fn set_theme(theme: String) -> Result<(), ()> {
+  let mut cfg = CONFIG.write().await;
+  cfg.get_mut_config().frontend.theme = theme;
+  cfg.save_config();
   Ok(())
 }

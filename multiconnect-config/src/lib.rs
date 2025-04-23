@@ -1,3 +1,5 @@
+mod configs;
+
 use std::{
   error::Error,
   fs::{self, File, OpenOptions},
@@ -7,12 +9,14 @@ use std::{
   str::{self, FromStr},
 };
 
+use configs::FrontendConfig;
 use lazy_static::lazy_static;
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 lazy_static! {
-  pub static ref CONFIG: ConfigManager = ConfigManager::new();
+  pub static ref CONFIG: RwLock<ConfigManager> = RwLock::new(ConfigManager::new());
 }
 
 pub struct ConfigManager {
@@ -22,7 +26,7 @@ pub struct ConfigManager {
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-  x: u8,
+  pub frontend: FrontendConfig,
 }
 
 impl ConfigManager {
@@ -79,5 +83,31 @@ impl ConfigManager {
     let file = File::open(path)?;
     let config: Config = serde_yml::from_reader(file)?;
     Ok(config)
+  }
+
+  pub fn save_config(&self) {
+    let mut config_path = self.config_path.clone();
+    config_path.push("config.yml");
+
+    debug!("Saving config file");
+
+    match OpenOptions::new().write(true).truncate(true).create(true).open(&config_path) {
+      Ok(file) => {
+        if let Err(e) = serde_yml::to_writer(file, &self.config) {
+          error!("Failed to write config: {}", e);
+        }
+      }
+      Err(e) => {
+        error!("Failed to open config for saving: {}", e);
+      }
+    }
+  }
+
+  pub fn get_config(&self) -> &Config {
+    &self.config
+  }
+
+  pub fn get_mut_config(&mut self) -> &mut Config {
+    &mut self.config
   }
 }

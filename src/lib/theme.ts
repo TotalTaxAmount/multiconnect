@@ -1,21 +1,39 @@
+// src/lib/theme.ts
 import { writable } from "svelte/store";
+import { getTheme, setTheme } from "./commands";
 
-type Theme = 'light' | 'dark';
+export type Theme = "light" | "dark";
+
 const isValidTheme = (value: string | null): value is Theme =>
-  value === 'light' || value === 'dark';
+  value === "light" || value === "dark";
 
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-const localStorageTheme = localStorage.getItem('theme');
+// Step 1: Initial theme = light (safe fallback)
+export const theme = writable<Theme>("light");
 
-const initialTheme: Theme = isValidTheme(localStorageTheme)
-  ? localStorageTheme
-  : prefersDark
-    ? 'dark'
-    : 'light';
-export const theme = writable<Theme>(initialTheme);
+// Step 2: Only run on client
+if (typeof window !== "undefined") {
+  (async () => {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    let configTheme: string | null = null;
 
-theme.subscribe((v) => {
-  console.log(v)
-  document.documentElement.classList.toggle('dark', v === 'dark');
-  localStorage.setItem('theme', v);
-})
+    try {
+      configTheme = await getTheme();
+    } catch (err) {
+      console.warn("Could not get theme:", err);
+    }
+
+    const resolved: Theme = isValidTheme(configTheme)
+      ? configTheme
+      : prefersDark
+        ? "dark"
+        : "light";
+
+    theme.set(resolved);
+
+    // Update DOM and persist theme
+    theme.subscribe(async (v) => {
+      document.documentElement.classList.toggle("dark", v === "dark");
+      await setTheme(v);
+    });
+  })();
+}

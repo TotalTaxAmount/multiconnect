@@ -5,8 +5,8 @@ import type { Device } from "./types";
  * Send a paring request the daemon
  * @param peer The peer to pair with;
  */
-export function sendPairingRequest(device: Device) {
-  invoke('send_pairing_request', { device });
+export async function sendPairingRequest(device: Device) {
+  await invoke('send_pairing_request', { device });
 }
 
 /**
@@ -15,13 +15,21 @@ export function sendPairingRequest(device: Device) {
  * @param req_id The id of the pair request
  * @param peer 
  */
-export function sendPairingResponse(accepted: boolean, req_uuid: string) {
-  invoke('send_pairing_response', { accepted, reqUuid: req_uuid})
+export async function sendPairingResponse(accepted: boolean, req_uuid: string) {
+  await invoke('send_pairing_response', { accepted, reqUuid: req_uuid});
 }
 
 /**
  * Refresh peers
  */
-export function refreshMdns() {
-  invoke('refresh_mdns');
+export async function refreshMdns() {
+  await invoke('refresh_mdns');
+}
+
+export async function getTheme(): Promise<string> {
+   return await invoke('get_theme');
+}
+
+export async function setTheme(theme: string) {
+  await invoke('set_theme', { theme: theme });
 }
