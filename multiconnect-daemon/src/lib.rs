@@ -9,24 +9,18 @@ use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::{TcpListener, TcpStream},
-  sync::{
-    broadcast::{self, error::RecvError},
-    mpsc, watch, Mutex,
-  },
+  sync::{broadcast, mpsc, watch, Mutex},
   time,
 };
-use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 pub type SharedDaemon = Arc<Daemon>;
-
-const PORT: u16 = 10999;
 
 #[derive(FromArgs)]
 #[argh(help_triggers("-h", "--help"))]
 /// Sync devices
 pub struct MulticonnectArgs {
   /// specify the port of the daemon to run on (default 10999)
-  #[argh(option, default = "PORT", short = 'p')]
+  #[argh(option, default = "10999", short = 'p')]
   pub port: u16,
   /// specify the log level (default is info) {trace|debug|info|warn|error}
   #[argh(option, default = "String::from(\"info\")")]

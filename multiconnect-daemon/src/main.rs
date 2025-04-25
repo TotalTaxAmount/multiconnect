@@ -1,6 +1,6 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use multiconnect_daemon::{
-  modules::{discovery::Discovery, pairing::PairingModule, ModuleManager, ModuleTest, MulticonnectCtx},
+  modules::{discovery::Discovery, pairing::PairingModule, ModuleManager},
   networking::NetworkManager,
   Daemon, MulticonnectArgs,
 };

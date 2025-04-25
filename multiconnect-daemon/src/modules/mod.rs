@@ -3,12 +3,9 @@ pub mod pairing;
 
 use async_trait::async_trait;
 use libp2p::PeerId;
-use log::{debug, info};
+use log::debug;
 use multiconnect_protocol::{Device, Packet};
-use std::{
-  collections::HashMap,
-  sync::{Arc, RwLock},
-};
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
   sync::{broadcast, mpsc, Mutex},
   time::{self, Duration},
@@ -169,27 +166,5 @@ impl ModuleManager {
         }
       }
     });
-  }
-}
-
-pub struct ModuleTest;
-impl ModuleTest {
-  pub fn new() -> Self {
-    Self {}
-  }
-}
-
-#[async_trait]
-impl MulticonnectModule for ModuleTest {
-  async fn periodic(&mut self, ctx: &mut MulticonnectCtx) {
-    info!("Periodic")
-  }
-
-  async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx) {
-    info!("Recv packet: {:?} from {:?}", packet, source)
-  }
-
-  async fn on_frontend_packet(&mut self, packet: Packet, ctx: &mut MulticonnectCtx) {
-    info!("Recv frontend packet: {:?}", packet)
   }
 }

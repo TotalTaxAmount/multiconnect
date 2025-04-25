@@ -3,7 +3,6 @@ mod configs;
 use std::{
   error::Error,
   fs::{self, File, OpenOptions},
-  io::Write,
   path::PathBuf,
   process::exit,
   str::{self, FromStr},

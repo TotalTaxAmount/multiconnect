@@ -1,10 +1,9 @@
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use bincode::de;
 use libp2p::PeerId;
 use log::debug;
-use multiconnect_protocol::{local::peer::L0PeerFound, shared::peer::S1PeerMeta, Device, Packet, Peer};
+use multiconnect_protocol::{local::peer::L0PeerFound, shared::peer::S1PeerMeta, Device, Packet};
 
 use super::{MulticonnectCtx, MulticonnectModule};
 
