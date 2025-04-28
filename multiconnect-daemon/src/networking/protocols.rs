@@ -1,29 +1,47 @@
 // TODO:
 // - NetworkBehavior
 // - ConnectionHandler
+// - Todo: Error type
 
-use std::fmt::Debug;
+use std::{
+  collections::{HashMap, VecDeque},
+  fmt::Debug,
+  io::ErrorKind,
+  task::Poll,
+};
 
-use fern::Output;
 use libp2p::{
   core::UpgradeInfo,
-  futures, request_response,
-  swarm::{handler::InboundUpgradeSend, ConnectionHandler, NetworkBehaviour, SubstreamProtocol},
-  InboundUpgrade, OutboundUpgrade,
+  futures::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
+  swarm::{ConnectionHandler, ConnectionHandlerEvent, NetworkBehaviour, SubstreamProtocol, ToSwarm},
+  InboundUpgrade, OutboundUpgrade, PeerId,
 };
+use log::warn;
 use multiconnect_protocol::Packet;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 trait AsyncReadWrite: AsyncRead + AsyncWrite + Debug {}
 impl<T: AsyncRead + AsyncWrite + ?Sized + Debug> AsyncReadWrite for T {}
-type NegoiatedSubstream = Box<dyn AsyncReadWrite + Send>;
+type Stream = Box<dyn AsyncReadWrite + Send + Unpin>;
 
-pub enum BehaviourEvent {}
+#[derive(Debug)]
+pub enum BehaviourEvent {
+  PacketRecived(PeerId, Packet),
+  ConnectionOpenRequest(PeerId),
+  ConnectionClosed(PeerId),
+}
+
+#[derive(Debug)]
+pub enum HandlerCommand {
+  OpenStream,
+  SendPacket(Packet),
+  CloseStream,
+}
 
 #[derive(Debug)]
 pub enum HandlerEvent {
   InboundPacket(Packet),
-  InboundStream(NegoiatedSubstream),
+  InboundStream(Stream),
+  ConnectionClosed,
 }
 
 pub struct Proto;
@@ -31,66 +49,97 @@ pub struct Proto;
 impl UpgradeInfo for Proto {
   type Info = String;
 
-  type InfoIter = Vec<String>;
+  type InfoIter = std::iter::Once<Self::Info>;
 
   fn protocol_info(&self) -> Self::InfoIter {
-    vec!["/mc-proto/0.0.1".to_string()]
+    std::iter::once("/mc-proto/0.0.1".to_string())
   }
 }
 
-impl InboundUpgrade<NegoiatedSubstream> for Proto {
-  type Output = NegoiatedSubstream;
+impl<TSocket> InboundUpgrade<TSocket> for Proto
+where
+  TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static + Debug,
+{
+  type Output = Stream;
 
   type Error = std::io::Error;
 
   type Future = futures::future::Ready<Result<Self::Output, Self::Error>>;
 
-  fn upgrade_inbound(self, socket: NegoiatedSubstream, _: Self::Info) -> Self::Future {
-    futures::future::ready(Ok(socket))
+  fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    futures::future::ready(Ok(Box::new(socket)))
   }
 }
 
-impl OutboundUpgrade<NegoiatedSubstream> for Proto {
-  type Output = NegoiatedSubstream;
+impl<TSocket> OutboundUpgrade<TSocket> for Proto
+where
+  TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static + Debug,
+{
+  type Output = Stream;
 
   type Error = std::io::Error;
 
   type Future = futures::future::Ready<Result<Self::Output, Self::Error>>;
 
-  fn upgrade_outbound(self, socket: NegoiatedSubstream, _: Self::Info) -> Self::Future {
-    futures::future::ready(Ok(socket))
+  fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    futures::future::ready(Ok(Box::new(socket)))
   }
 }
 
-pub struct SteamConnectionHandler;
-impl ConnectionHandler for SteamConnectionHandler {
-  type FromBehaviour = ();
+pub struct StreamConnectionHandler {
+  pending_open: bool,
+  pending_events: VecDeque<ConnectionHandlerEvent<Proto, (), HandlerEvent>>,
+}
+
+impl StreamConnectionHandler {
+  pub fn new() -> Self {
+    Self { pending_open: false, pending_events: VecDeque::new() }
+  }
+}
+
+impl ConnectionHandler for StreamConnectionHandler {
+  type FromBehaviour = HandlerCommand;
 
   type ToBehaviour = HandlerEvent;
 
-  type InboundProtocol = SubstreamProtocol<Proto, ()>;
+  type InboundProtocol = Proto;
 
-  type OutboundProtocol;
+  type OutboundProtocol = Proto;
 
-  type InboundOpenInfo;
+  type InboundOpenInfo = ();
 
-  type OutboundOpenInfo;
+  type OutboundOpenInfo = ();
 
   fn listen_protocol(&self) -> libp2p::swarm::SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
-    todo!()
+    SubstreamProtocol::new(Proto, ())
   }
 
   fn poll(
     &mut self,
-    cx: &mut std::task::Context<'_>,
+    _cx: &mut std::task::Context<'_>,
   ) -> std::task::Poll<
     libp2p::swarm::ConnectionHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::ToBehaviour>,
   > {
-    todo!()
+    if let Some(e) = self.pending_events.pop_front() {
+      Poll::Ready(e)
+    } else if self.pending_open {
+      self.pending_open = false;
+      Poll::Ready(ConnectionHandlerEvent::OutboundSubstreamRequest { protocol: SubstreamProtocol::new(Proto, ()) })
+    } else {
+      Poll::Pending
+    }
   }
 
-  fn on_behaviour_event(&mut self, _event: Self::FromBehaviour) {
-    todo!()
+  fn on_behaviour_event(&mut self, event: Self::FromBehaviour) {
+    match event {
+      HandlerCommand::OpenStream => {
+        self.pending_open = true;
+      }
+      HandlerCommand::SendPacket(_packet) => {
+        // TODO??
+      }
+      HandlerCommand::CloseStream => todo!(),
+    }
   }
 
   fn on_connection_event(
@@ -102,54 +151,113 @@ impl ConnectionHandler for SteamConnectionHandler {
       Self::OutboundOpenInfo,
     >,
   ) {
-    todo!()
+    match event {
+      libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(fni) => {
+        let stream = fni.protocol;
+        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream(stream)));
+      }
+      libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(fno) => {
+        let stream = fno.protocol;
+        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream(stream)));
+      }
+      _ => {}
+    }
   }
 }
 
-pub struct MulticonnectDataBehaviour;
+pub struct MulticonnectDataBehaviour {
+  open_streams: HashMap<PeerId, Stream>,
+  queued_events: VecDeque<ToSwarm<BehaviourEvent, HandlerCommand>>,
+}
+
+impl MulticonnectDataBehaviour {
+  pub fn new() -> Self {
+    Self { open_streams: HashMap::new(), queued_events: VecDeque::new() }
+  }
+
+  pub async fn open_stream(&mut self, peer_id: PeerId) -> std::io::Result<()> {
+    self.queued_events.push_back(ToSwarm::NotifyHandler {
+      peer_id,
+      handler: libp2p::swarm::NotifyHandler::Any,
+      event: HandlerCommand::OpenStream,
+    });
+    Ok(())
+  }
+
+  pub async fn send_packet(&mut self, peer_id: PeerId, packet: Packet) -> std::io::Result<()> {
+    if let Some(s) = self.open_streams.get_mut(&peer_id) {
+      let bytes = Packet::to_bytes(&packet).unwrap();
+      s.write_all(&bytes).await;
+      Ok(())
+    } else {
+      warn!("Appempted to send a packet to a peer that is not connected");
+      Err(ErrorKind::HostUnreachable.into())
+    }
+  }
+
+  pub async fn close_stream(&mut self, peer_id: PeerId) {
+    self.open_streams.remove(&peer_id);
+    self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::ConnectionClosed(peer_id)));
+  }
+}
+
 impl NetworkBehaviour for MulticonnectDataBehaviour {
-  type ConnectionHandler = SteamConnectionHandler;
+  type ConnectionHandler = StreamConnectionHandler;
 
   type ToSwarm = BehaviourEvent;
 
   fn handle_established_inbound_connection(
     &mut self,
-    _connection_id: libp2p::swarm::ConnectionId,
-    peer: libp2p::PeerId,
-    local_addr: &libp2p::Multiaddr,
-    remote_addr: &libp2p::Multiaddr,
+    _: libp2p::swarm::ConnectionId,
+    _: libp2p::PeerId,
+    _: &libp2p::Multiaddr,
+    _: &libp2p::Multiaddr,
   ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-    todo!()
+    Ok(StreamConnectionHandler::new())
   }
 
   fn handle_established_outbound_connection(
     &mut self,
-    _connection_id: libp2p::swarm::ConnectionId,
-    peer: libp2p::PeerId,
-    addr: &libp2p::Multiaddr,
-    role_override: libp2p::core::Endpoint,
-    port_use: libp2p::core::transport::PortUse,
+    _: libp2p::swarm::ConnectionId,
+    _: libp2p::PeerId,
+    _: &libp2p::Multiaddr,
+    _: libp2p::core::Endpoint,
+    _: libp2p::core::transport::PortUse,
   ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-    todo!()
+    Ok(StreamConnectionHandler::new())
   }
 
-  fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm) {
-    todo!()
-  }
+  fn on_swarm_event(&mut self, _: libp2p::swarm::FromSwarm) {}
 
   fn on_connection_handler_event(
     &mut self,
-    _peer_id: libp2p::PeerId,
+    peer_id: libp2p::PeerId,
     _connection_id: libp2p::swarm::ConnectionId,
-    _event: libp2p::swarm::THandlerOutEvent<Self>,
+    event: libp2p::swarm::THandlerOutEvent<Self>,
   ) {
-    todo!()
+    match event {
+      HandlerEvent::InboundPacket(packet) => {
+        self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::PacketRecived(peer_id, packet)));
+      }
+      HandlerEvent::InboundStream(stream) => {
+        self.open_streams.remove(&peer_id);
+        self.open_streams.insert(peer_id, stream);
+      }
+      HandlerEvent::ConnectionClosed => {
+        self.open_streams.remove(&peer_id);
+        self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::ConnectionClosed(peer_id)));
+      }
+    }
   }
 
   fn poll(
     &mut self,
-    cx: &mut std::task::Context<'_>,
+    _: &mut std::task::Context<'_>,
   ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
-    todo!()
+    if let Some(e) = self.queued_events.pop_front() {
+      Poll::Ready(e)
+    } else {
+      Poll::Pending
+    }
   }
 }
