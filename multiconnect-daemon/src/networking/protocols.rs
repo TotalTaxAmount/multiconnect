@@ -1,73 +1,155 @@
-use async_trait::async_trait;
+// TODO:
+// - NetworkBehavior
+// - ConnectionHandler
+
+use std::fmt::Debug;
+
+use fern::Output;
 use libp2p::{
-  futures::{io, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-  request_response,
+  core::UpgradeInfo,
+  futures, request_response,
+  swarm::{handler::InboundUpgradeSend, ConnectionHandler, NetworkBehaviour, SubstreamProtocol},
+  InboundUpgrade, OutboundUpgrade,
 };
-
-use log::debug;
 use multiconnect_protocol::Packet;
+use tokio::io::{AsyncRead, AsyncWrite};
 
-#[derive(Clone, Default)]
-pub(crate) struct PacketCodec;
+trait AsyncReadWrite: AsyncRead + AsyncWrite + Debug {}
+impl<T: AsyncRead + AsyncWrite + ?Sized + Debug> AsyncReadWrite for T {}
+type NegoiatedSubstream = Box<dyn AsyncReadWrite + Send>;
 
-#[async_trait]
-impl request_response::Codec for PacketCodec {
-  #[doc = " The type of protocol(s) or protocol versions being negotiated."]
-  type Protocol = String;
+pub enum BehaviourEvent {}
 
-  #[doc = " The type of inbound and outbound requests."]
-  type Request = Packet;
+#[derive(Debug)]
+pub enum HandlerEvent {
+  InboundPacket(Packet),
+  InboundStream(NegoiatedSubstream),
+}
 
-  #[doc = " The type of inbound and outbound responses."]
-  type Response = ();
+pub struct Proto;
 
-  #[doc = " Reads a request from the given I/O stream according to the"]
-  #[doc = " negotiated protocol."]
-  async fn read_request<T>(&mut self, protocol: &Self::Protocol, io: &mut T) -> io::Result<Self::Request>
-  where
-    T: AsyncRead + Unpin + Send,
-  {
-    debug!("Read request");
-    let mut len_buf = [0u8; 2];
-    io.read_exact(&mut len_buf).await?;
-    let len = u16::from_be_bytes(len_buf) as usize;
-    debug!("Len: {}", len);
+impl UpgradeInfo for Proto {
+  type Info = String;
 
-    let mut buf = vec![0u8; len];
-    io.read_exact(&mut buf).await?;
-    debug!("Raw packet: {:?}", buf);
+  type InfoIter = Vec<String>;
 
-    Packet::from_bytes(&buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+  fn protocol_info(&self) -> Self::InfoIter {
+    vec!["/mc-proto/0.0.1".to_string()]
+  }
+}
+
+impl InboundUpgrade<NegoiatedSubstream> for Proto {
+  type Output = NegoiatedSubstream;
+
+  type Error = std::io::Error;
+
+  type Future = futures::future::Ready<Result<Self::Output, Self::Error>>;
+
+  fn upgrade_inbound(self, socket: NegoiatedSubstream, _: Self::Info) -> Self::Future {
+    futures::future::ready(Ok(socket))
+  }
+}
+
+impl OutboundUpgrade<NegoiatedSubstream> for Proto {
+  type Output = NegoiatedSubstream;
+
+  type Error = std::io::Error;
+
+  type Future = futures::future::Ready<Result<Self::Output, Self::Error>>;
+
+  fn upgrade_outbound(self, socket: NegoiatedSubstream, _: Self::Info) -> Self::Future {
+    futures::future::ready(Ok(socket))
+  }
+}
+
+pub struct SteamConnectionHandler;
+impl ConnectionHandler for SteamConnectionHandler {
+  type FromBehaviour = ();
+
+  type ToBehaviour = HandlerEvent;
+
+  type InboundProtocol = SubstreamProtocol<Proto, ()>;
+
+  type OutboundProtocol;
+
+  type InboundOpenInfo;
+
+  type OutboundOpenInfo;
+
+  fn listen_protocol(&self) -> libp2p::swarm::SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
+    todo!()
   }
 
-  #[doc = " Reads a response from the given I/O stream according to the"]
-  #[doc = " negotiated protocol."]
-  async fn read_response<T>(&mut self, _protocol: &Self::Protocol, _io: &mut T) -> io::Result<Self::Response>
-  where
-    T: AsyncRead + Unpin + Send,
-  {
-    Ok(())
+  fn poll(
+    &mut self,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<
+    libp2p::swarm::ConnectionHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::ToBehaviour>,
+  > {
+    todo!()
   }
 
-  #[doc = " Writes a request to the given I/O stream according to the"]
-  #[doc = " negotiated protocol."]
-  async fn write_request<T>(&mut self, _protocol: &Self::Protocol, io: &mut T, req: Self::Request) -> io::Result<()>
-  where
-    T: AsyncWrite + Unpin + Send,
-  {
-    debug!("Write request");
-    let bytes: Vec<u8> = Packet::to_bytes(&req).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    debug!("Raw bytes: {:?}", bytes);
-    io.write_all(&bytes).await?;
-    io.flush().await
+  fn on_behaviour_event(&mut self, _event: Self::FromBehaviour) {
+    todo!()
   }
 
-  #[doc = " Writes a response to the given I/O stream according to the"]
-  #[doc = " negotiated protocol."]
-  async fn write_response<T>(&mut self, _protocol: &Self::Protocol, io: &mut T, _res: Self::Response) -> io::Result<()>
-  where
-    T: AsyncWrite + Unpin + Send,
-  {
-    io.flush().await
+  fn on_connection_event(
+    &mut self,
+    event: libp2p::swarm::handler::ConnectionEvent<
+      Self::InboundProtocol,
+      Self::OutboundProtocol,
+      Self::InboundOpenInfo,
+      Self::OutboundOpenInfo,
+    >,
+  ) {
+    todo!()
+  }
+}
+
+pub struct MulticonnectDataBehaviour;
+impl NetworkBehaviour for MulticonnectDataBehaviour {
+  type ConnectionHandler = SteamConnectionHandler;
+
+  type ToSwarm = BehaviourEvent;
+
+  fn handle_established_inbound_connection(
+    &mut self,
+    _connection_id: libp2p::swarm::ConnectionId,
+    peer: libp2p::PeerId,
+    local_addr: &libp2p::Multiaddr,
+    remote_addr: &libp2p::Multiaddr,
+  ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+    todo!()
+  }
+
+  fn handle_established_outbound_connection(
+    &mut self,
+    _connection_id: libp2p::swarm::ConnectionId,
+    peer: libp2p::PeerId,
+    addr: &libp2p::Multiaddr,
+    role_override: libp2p::core::Endpoint,
+    port_use: libp2p::core::transport::PortUse,
+  ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+    todo!()
+  }
+
+  fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm) {
+    todo!()
+  }
+
+  fn on_connection_handler_event(
+    &mut self,
+    _peer_id: libp2p::PeerId,
+    _connection_id: libp2p::swarm::ConnectionId,
+    _event: libp2p::swarm::THandlerOutEvent<Self>,
+  ) {
+    todo!()
+  }
+
+  fn poll(
+    &mut self,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
+    todo!()
   }
 }
