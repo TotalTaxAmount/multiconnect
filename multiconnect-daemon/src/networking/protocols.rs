@@ -6,22 +6,29 @@
 use std::{
   collections::{HashMap, VecDeque},
   fmt::Debug,
-  io::ErrorKind,
+  io::{self, ErrorKind},
+  pin::Pin,
+  sync::Arc,
   task::Poll,
 };
 
+use argh::Flag;
+use async_trait::async_trait;
 use libp2p::{
   core::UpgradeInfo,
-  futures::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
+  futures::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+  request_response,
   swarm::{ConnectionHandler, ConnectionHandlerEvent, NetworkBehaviour, SubstreamProtocol, ToSwarm},
   InboundUpgrade, OutboundUpgrade, PeerId,
 };
-use log::warn;
+use log::{debug, error, info, warn};
 use multiconnect_protocol::Packet;
+use tokio::sync::{mpsc, oneshot, Mutex};
 
-trait AsyncReadWrite: AsyncRead + AsyncWrite + Debug {}
+pub trait AsyncReadWrite: AsyncRead + AsyncWrite + Debug {}
 impl<T: AsyncRead + AsyncWrite + ?Sized + Debug> AsyncReadWrite for T {}
 type Stream = Box<dyn AsyncReadWrite + Send + Unpin>;
+type SharedStream = Arc<Mutex<Stream>>;
 
 #[derive(Debug)]
 pub enum BehaviourEvent {
@@ -40,8 +47,9 @@ pub enum HandlerCommand {
 #[derive(Debug)]
 pub enum HandlerEvent {
   InboundPacket(Packet),
-  InboundStream(Stream),
+  InboundStream { stream: Stream, inbound: bool },
   ConnectionClosed,
+  Wake,
 }
 
 pub struct Proto;
@@ -123,6 +131,7 @@ impl ConnectionHandler for StreamConnectionHandler {
     if let Some(e) = self.pending_events.pop_front() {
       Poll::Ready(e)
     } else if self.pending_open {
+      debug!("Sending outbount substream request");
       self.pending_open = false;
       Poll::Ready(ConnectionHandlerEvent::OutboundSubstreamRequest { protocol: SubstreamProtocol::new(Proto, ()) })
     } else {
@@ -134,6 +143,7 @@ impl ConnectionHandler for StreamConnectionHandler {
     match event {
       HandlerCommand::OpenStream => {
         self.pending_open = true;
+        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::Wake));
       }
       HandlerCommand::SendPacket(_packet) => {
         // TODO??
@@ -154,11 +164,15 @@ impl ConnectionHandler for StreamConnectionHandler {
     match event {
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(fni) => {
         let stream = fni.protocol;
-        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream(stream)));
+        self
+          .pending_events
+          .push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream { stream, inbound: true }));
       }
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(fno) => {
         let stream = fno.protocol;
-        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream(stream)));
+        self
+          .pending_events
+          .push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream { stream, inbound: false }));
       }
       _ => {}
     }
@@ -166,16 +180,26 @@ impl ConnectionHandler for StreamConnectionHandler {
 }
 
 pub struct MulticonnectDataBehaviour {
-  open_streams: HashMap<PeerId, Stream>,
+  open_streams: HashMap<PeerId, SharedStream>,
+  pending_streams: HashMap<PeerId, Stream>,
   queued_events: VecDeque<ToSwarm<BehaviourEvent, HandlerCommand>>,
+  packet_rec_rx: mpsc::Receiver<(PeerId, Packet)>,
+  packet_rec_tx: mpsc::Sender<(PeerId, Packet)>,
 }
 
 impl MulticonnectDataBehaviour {
   pub fn new() -> Self {
-    Self { open_streams: HashMap::new(), queued_events: VecDeque::new() }
+    let (tx, rx) = mpsc::channel(100);
+    Self {
+      open_streams: HashMap::new(),
+      pending_streams: HashMap::new(),
+      queued_events: VecDeque::new(),
+      packet_rec_rx: rx,
+      packet_rec_tx: tx,
+    }
   }
 
-  pub async fn open_stream(&mut self, peer_id: PeerId) -> std::io::Result<()> {
+  pub fn open_stream(&mut self, peer_id: PeerId) -> std::io::Result<()> {
     self.queued_events.push_back(ToSwarm::NotifyHandler {
       peer_id,
       handler: libp2p::swarm::NotifyHandler::Any,
@@ -184,10 +208,16 @@ impl MulticonnectDataBehaviour {
     Ok(())
   }
 
-  pub async fn send_packet(&mut self, peer_id: PeerId, packet: Packet) -> std::io::Result<()> {
-    if let Some(s) = self.open_streams.get_mut(&peer_id) {
+  pub fn check_connection(&self, peer_id: &PeerId) -> bool {
+    self.open_streams.contains_key(peer_id)
+  }
+
+  pub async fn send_packet(&mut self, peer_id: &PeerId, packet: Packet) -> std::io::Result<()> {
+    if let Some(s) = self.open_streams.get_mut(peer_id) {
       let bytes = Packet::to_bytes(&packet).unwrap();
-      s.write_all(&bytes).await;
+      debug!("Bytes: {:?}", bytes);
+      let _ = s.lock().await.write_all(&bytes).await;
+      let _ = s.lock().await.flush().await;
       Ok(())
     } else {
       warn!("Appempted to send a packet to a peer that is not connected");
@@ -195,9 +225,66 @@ impl MulticonnectDataBehaviour {
     }
   }
 
-  pub async fn close_stream(&mut self, peer_id: PeerId) {
+  pub fn close_stream(&mut self, peer_id: PeerId) {
     self.open_streams.remove(&peer_id);
     self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::ConnectionClosed(peer_id)));
+  }
+
+  pub fn approve_inbound_stream(&mut self, peer_id: PeerId) {
+    if let Some(s) = self.pending_streams.remove(&peer_id) {
+      debug!("Approving stream request from: {}", peer_id);
+      self.open_streams.insert(peer_id, Arc::new(Mutex::new(s)));
+    } else {
+      warn!("Attempted to approve a nonpending stream");
+    }
+  }
+
+  pub fn deny_inbound_stream(&mut self, peer_id: &PeerId) {
+    // TODO: Maybe send something for graceful close?
+    self.pending_streams.remove(peer_id);
+    debug!("Denied stream request from: {}", peer_id);
+  }
+
+  fn spawn_reader(&mut self, stream: SharedStream, peer_id: &PeerId) {
+    let tx = self.packet_rec_tx.clone();
+
+    self.open_streams.insert(peer_id.clone(), stream.clone());
+
+    let peer_id = peer_id.clone();
+    tokio::spawn(async move {
+      loop {
+        let mut buf = [0u8; 2];
+        let _ = stream.lock().await.read_exact(&mut buf).await;
+        let len = u16::from_be_bytes(buf);
+        let mut buf = vec![0u8; len as usize];
+
+        if len == 0 {
+          warn!("Stream closed");
+          break;
+        }
+
+        debug!("Packet len: {}", len);
+
+        match stream.lock().await.read_exact(&mut buf).await {
+          Ok(_) => {
+            let packet = match Packet::from_bytes(&buf) {
+              Ok(p) => p,
+              Err(e) => {
+                error!("Error decoding packet: {}", e);
+                break;
+              }
+            };
+
+            debug!("Recivied {:?} from peer", packet);
+            let _ = tx.send((peer_id.clone(), packet)).await;
+          }
+          Err(e) => {
+            error!("Read error: {}", e);
+            break;
+          }
+        }
+      }
+    });
   }
 }
 
@@ -213,6 +300,7 @@ impl NetworkBehaviour for MulticonnectDataBehaviour {
     _: &libp2p::Multiaddr,
     _: &libp2p::Multiaddr,
   ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+    debug!("Creating inbound conneciton handler");
     Ok(StreamConnectionHandler::new())
   }
 
@@ -224,6 +312,7 @@ impl NetworkBehaviour for MulticonnectDataBehaviour {
     _: libp2p::core::Endpoint,
     _: libp2p::core::transport::PortUse,
   ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+    debug!("Creating outbound connection handler");
     Ok(StreamConnectionHandler::new())
   }
 
@@ -239,25 +328,116 @@ impl NetworkBehaviour for MulticonnectDataBehaviour {
       HandlerEvent::InboundPacket(packet) => {
         self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::PacketRecived(peer_id, packet)));
       }
-      HandlerEvent::InboundStream(stream) => {
+      HandlerEvent::InboundStream { stream, inbound: false } => {
         self.open_streams.remove(&peer_id);
-        self.open_streams.insert(peer_id, stream);
+        self.spawn_reader(Arc::new(Mutex::new(stream)), &peer_id);
+      }
+      HandlerEvent::InboundStream { stream, inbound: true } => {
+        self.pending_streams.insert(peer_id, stream);
+        self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::ConnectionOpenRequest(peer_id)));
       }
       HandlerEvent::ConnectionClosed => {
         self.open_streams.remove(&peer_id);
+        self.pending_streams.remove(&peer_id);
         self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::ConnectionClosed(peer_id)));
       }
+      HandlerEvent::Wake => {}
     }
   }
 
   fn poll(
     &mut self,
-    _: &mut std::task::Context<'_>,
+    cx: &mut std::task::Context<'_>,
   ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
-    if let Some(e) = self.queued_events.pop_front() {
-      Poll::Ready(e)
-    } else {
-      Poll::Pending
+    while let Poll::Ready(Some((peer_id, packet))) = Pin::new(&mut self.packet_rec_rx).poll_recv(cx) {
+      self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::PacketRecived(peer_id, packet)));
     }
+
+    if let Some(e) = self.queued_events.pop_front() {
+      debug!("{:?}", e);
+      return Poll::Ready(e);
+    }
+
+    Poll::Pending
+  }
+}
+
+// TODO: Make this more confined to pairing requests and responses
+#[derive(Clone, Copy, Default)]
+pub struct PairingCodec;
+
+#[async_trait]
+impl request_response::Codec for PairingCodec {
+  #[doc = " The type of protocol(s) or protocol versions being negotiated."]
+  type Protocol = String;
+
+  #[doc = " The type of inbound and outbound requests."]
+  type Request = Packet;
+
+  #[doc = " The type of inbound and outbound responses."]
+  type Response = Packet;
+
+  #[doc = " Reads a request from the given I/O stream according to the"]
+  #[doc = " negotiated protocol."]
+  async fn read_request<T>(&mut self, protocol: &Self::Protocol, io: &mut T) -> io::Result<Self::Request>
+  where
+    T: AsyncRead + Unpin + Send,
+  {
+    debug!("Read request");
+    let mut len_buf = [0u8; 2];
+    io.read_exact(&mut len_buf).await?;
+    let len = u16::from_be_bytes(len_buf) as usize;
+    debug!("Len: {}", len);
+
+    let mut buf = vec![0u8; len];
+    io.read_exact(&mut buf).await?;
+    debug!("Raw packet: {:?}", buf);
+
+    Packet::from_bytes(&buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+  }
+
+  #[doc = " Reads a response from the given I/O stream according to the"]
+  #[doc = " negotiated protocol."]
+  async fn read_response<T>(&mut self, _protocol: &Self::Protocol, io: &mut T) -> io::Result<Self::Response>
+  where
+    T: AsyncRead + Unpin + Send,
+  {
+    debug!("Read response");
+    let mut len_buf = [0u8; 2];
+    io.read_exact(&mut len_buf).await?;
+    let len = u16::from_be_bytes(len_buf) as usize;
+    debug!("Len: {}", len);
+
+    let mut buf = vec![0u8; len];
+    io.read_exact(&mut buf).await?;
+    debug!("Raw packet: {:?}", buf);
+
+    Packet::from_bytes(&buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+  }
+
+  #[doc = " Writes a request to the given I/O stream according to the"]
+  #[doc = " negotiated protocol."]
+  async fn write_request<T>(&mut self, _protocol: &Self::Protocol, io: &mut T, req: Self::Request) -> io::Result<()>
+  where
+    T: AsyncWrite + Unpin + Send,
+  {
+    debug!("Write request");
+    let bytes: Vec<u8> = Packet::to_bytes(&req).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    debug!("Raw bytes: {:?}", bytes);
+    io.write_all(&bytes).await?;
+    io.flush().await
+  }
+
+  #[doc = " Writes a response to the given I/O stream according to the"]
+  #[doc = " negotiated protocol."]
+  async fn write_response<T>(&mut self, _protocol: &Self::Protocol, io: &mut T, res: Self::Response) -> io::Result<()>
+  where
+    T: AsyncWrite + Unpin + Send,
+  {
+    debug!("Write request");
+    let bytes: Vec<u8> = Packet::to_bytes(&res).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    debug!("Raw bytes: {:?}", bytes);
+    io.write_all(&bytes).await?;
+    io.flush().await
   }
 }
