@@ -2,16 +2,26 @@ pub mod discovery;
 pub mod pairing;
 
 use async_trait::async_trait;
-use libp2p::PeerId;
+use libp2p::{
+  request_response::{Event, Message, ResponseChannel},
+  PeerId,
+};
 use log::debug;
-use multiconnect_protocol::{Device, Packet};
+use multiconnect_protocol::{Device, Packet, Peer};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
-  sync::{broadcast, mpsc, Mutex},
+  sync::{broadcast, mpsc, oneshot, Mutex},
   time::{self, Duration},
 };
+use uid::Id;
 
 use crate::{networking::NetworkManager, SharedDaemon};
+
+#[derive(Debug, PartialEq)]
+pub enum Target {
+  Local(Packet),
+  Peer(PeerId, Packet),
+}
 
 /// A module that can be used for features
 #[async_trait]
@@ -27,10 +37,8 @@ pub trait MulticonnectModule: Send + Sync {
 /// Context that modules get and allows them to do things like send packets to the
 /// frontend/peers and see what devices and currently paired
 pub struct MulticonnectCtx {
-  /// The instance of the daemon (frontend communication)
-  send_frontend_packet_tx: mpsc::Sender<Packet>,
-  /// A mpsc channel to send packets to peers
-  send_peer_packet_tx: mpsc::Sender<(PeerId, Packet)>,
+  /// TA channel to send packets to various locations
+  send_packet_tx: mpsc::Sender<Target>,
   /// A HashMap of PeerIds and corrosponding Devices and weather they are paired or not
   devices: HashMap<PeerId, (Device, bool)>,
   /// The current device
@@ -39,22 +47,18 @@ pub struct MulticonnectCtx {
 
 impl MulticonnectCtx {
   /// Create a new instance of `MulticonnectCtx` <br />
-  pub fn new(
-    send_frontend_packet_tx: mpsc::Sender<Packet>,
-    packet_channel: mpsc::Sender<(PeerId, Packet)>,
-    this_device: Device,
-  ) -> Self {
-    Self { send_frontend_packet_tx, send_peer_packet_tx: packet_channel, this_device, devices: HashMap::new() }
+  pub fn new(send_packet_tx: mpsc::Sender<Target>, this_device: Device) -> Self {
+    Self { send_packet_tx, this_device, devices: HashMap::new() }
   }
 
   /// Send a packet to the frontend
   pub async fn send_to_frontend(&self, packet: Packet) {
-    let _ = self.send_frontend_packet_tx.send(packet).await;
+    let _ = self.send_packet_tx.send(Target::Local(packet)).await;
   }
 
   /// Send a packet to a peer
   pub async fn send_to_peer(&self, target: PeerId, packet: Packet) {
-    let _ = self.send_peer_packet_tx.send((target, packet)).await;
+    let _ = self.send_packet_tx.send(Target::Peer(target, packet)).await;
   }
 
   /// Get the HashMap of paired devices
@@ -90,10 +94,18 @@ impl MulticonnectCtx {
 pub struct ModuleManager {
   /// A list of all registered modules
   modules: Vec<Box<dyn MulticonnectModule>>,
+  /// Pending requests
+  pending_requests: HashMap<Id<Target>, ResponseChannel<Packet>>,
   /// Reciver for packets coming from the frontend
   recv_frontend_packet_rx: broadcast::Receiver<Packet>,
   /// Reciver for packets coming from peers
   recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
+  /// Sender for peer related packets
+  send_peer_packet_tx: mpsc::Sender<(PeerId, Packet)>,
+  // Sender from sending frontend packets
+  send_frontend_packet_tx: mpsc::Sender<Packet>,
+  /// Packets to send from modules
+  send_packet_rx: mpsc::Receiver<Target>,
   /// Context that is shared between all modules
   ctx: Arc<Mutex<MulticonnectCtx>>,
 }
@@ -101,15 +113,19 @@ pub struct ModuleManager {
 impl ModuleManager {
   /// Create a new module manager
   pub fn new(network_manager: NetworkManager, daemon: SharedDaemon) -> Self {
+    let (send_packet_tx, send_packet_rx) = mpsc::channel(100);
     Self {
       ctx: Arc::new(Mutex::new(MulticonnectCtx::new(
-        daemon.send_packet_channel(),
-        network_manager.send_packet_channel(),
+        send_packet_tx,
         Device::this(network_manager.get_local_peer_id()),
       ))),
       modules: Vec::new(),
+      pending_requests: HashMap::new(),
+      send_frontend_packet_tx: daemon.send_packet_channel(),
+      send_peer_packet_tx: network_manager.send_packet_channel(),
       recv_frontend_packet_rx: daemon.recv_packet_channel(),
       recv_peer_packet_rx: network_manager.recv_packet_channel(),
+      send_packet_rx,
     }
   }
 
@@ -159,6 +175,13 @@ impl ModuleManager {
             self.call_on_peer_packet(source, packet, &mut ctx).await;
           },
 
+          target = self.send_packet_rx.recv() => if let Some(target) = target {
+
+            match target {
+              Target::Local(packet) => { let _ = self.send_frontend_packet_tx.send(packet.to_owned()).await; },
+              Target::Peer(peer_id, packet) => { let _ = self.send_peer_packet_tx.send((peer_id, packet)).await; },
+            };
+          },
           _ = periodic_interval.tick() => {
             let mut ctx = ctx.lock().await;
             self.call_perodic(&mut ctx).await;

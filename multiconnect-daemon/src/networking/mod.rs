@@ -1,34 +1,26 @@
 mod protocols;
 mod store;
 
-use std::{collections::HashMap, error::Error, io, str::FromStr, sync::Arc, time::Duration};
+use std::{error::Error, io, time::Duration};
 
-use async_trait::async_trait;
 use libp2p::{
-  core::transport::DialOpts,
-  futures::{AsyncRead, StreamExt},
+  futures::StreamExt,
   identity::Keypair,
   mdns, noise,
-  request_response::{self, Codec, Config, ProtocolSupport},
+  request_response::{self, Config, Message, ProtocolSupport},
   swarm::{NetworkBehaviour, SwarmEvent},
   tcp, yamux, Multiaddr, PeerId, SwarmBuilder,
 };
 use log::{debug, info, trace, warn};
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{
-  local::peer::L1PeerExpired,
-  p2p::{peer::P3PeerPairResponse, P0Ping},
-  shared::peer::*,
-  Device, Packet,
-};
+use multiconnect_protocol::{local::peer::L1PeerExpired, p2p::P0Ping, shared::peer::*, Device, Packet};
 use protocols::{BehaviourEvent, MulticonnectDataBehaviour, PairingCodec};
 use tokio::{
   fs::File,
-  io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
-  sync::{broadcast, mpsc, RwLock},
+  io::{AsyncReadExt, AsyncWriteExt},
+  sync::{broadcast, mpsc},
 };
 use tracing_subscriber::EnvFilter;
-use uuid::Uuid;
 
 #[derive(NetworkBehaviour)]
 struct MulticonnectBehavior {
@@ -62,7 +54,6 @@ pub struct NetworkManager {
   send_packet_tx: mpsc::Sender<(PeerId, Packet)>,
   recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
   local_peer_id: PeerId,
-  devices: Arc<RwLock<HashMap<PeerId, (Device, bool)>>>,
 }
 
 impl NetworkManager {
@@ -71,7 +62,6 @@ impl NetworkManager {
 
     let (send_packet_tx, mut send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
     let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
-    let devices = Arc::new(RwLock::new(HashMap::new()));
 
     debug!("Initializing new swarm");
 
@@ -102,7 +92,6 @@ impl NetworkManager {
       )));
     }
 
-    let devices_clone = devices.clone();
     let _ = tokio::spawn(async move {
       loop {
         tokio::select! {
@@ -136,34 +125,10 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PairingProtocol(request_response::Event::Message { peer, message, .. })) => {
               match message {
-                request_response::Message::Request { request_id, request, channel } => {
-                  match request {
-                    Packet::P2PeerPairRequest(packet) => {
-                      debug!("Recivied pair request from {}", peer);
-                      let _ = swarm.behaviour_mut().pairing_protocol.send_response(channel, Packet::P3PeerPairResponse(P3PeerPairResponse::new(Uuid::from_str(&packet.req_uuid).unwrap(), true)));
-                    },
-                    Packet::S1PeerMeta(packet) => {
-                      let other = Device::from_meta(packet, peer);
-                      debug!("Recivied device meta (first): {:?}", other);
-                      devices_clone.write().await.insert(peer, (other, false));
+                Message::Request { request_id, request, channel } => {
 
-                      let _ = swarm.behaviour_mut().pairing_protocol.send_response(channel, Packet::S1PeerMeta(S1PeerMeta::from_device(&this_device)));
-                    },
-                    _ => {}
-                  }
                 },
-                request_response::Message::Response { request_id, response } => {
-                  match response {
-                    Packet::P3PeerPairResponse(packet) => {},
-                    Packet::S1PeerMeta(packet) => {
-                      let other = Device::from_meta(packet, peer);
-                      debug!("Recivied device meta (second): {:?}", other);
-                      devices_clone.write().await.insert(peer, (other, false));
-                      let _ = swarm.behaviour_mut().packet_protocol.open_stream(peer);
-                    },
-                    _ => {}
-                  }
-                },
+                Message::Response { request_id, response } => todo!(),
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::PacketRecived(source, packet))) => {
@@ -183,15 +148,16 @@ impl NetworkManager {
               trace!("Event: {:?}", event);
             },
           },
-          res = send_packet_rx.recv() => if let Some((target, packet)) = res {
-            debug!("Sending {:?} to {}", packet, target);
-            let _r = swarm.behaviour_mut().packet_protocol.send_packet(&target, packet).await;
-          }
+          res = send_packet_rx.recv() => if let Some((peer_id, packet)) = res {
+            debug!("Sending {:?} to {}", packet, peer_id);
+            let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer_id, packet).await;
+          },
+
         }
       }
     });
 
-    Ok(Self { send_packet_tx, recv_peer_packet_rx, local_peer_id, devices })
+    Ok(Self { send_packet_tx, recv_peer_packet_rx, local_peer_id })
   }
   /**
    * Get saved keys or generate new ones if they don't exist

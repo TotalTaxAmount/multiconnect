@@ -1,7 +1,7 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
-use libp2p::PeerId;
+use libp2p::{request_response::Message, PeerId};
 use log::debug;
 use multiconnect_protocol::{local::peer::L0PeerFound, shared::peer::S1PeerMeta, Device, Packet};
 

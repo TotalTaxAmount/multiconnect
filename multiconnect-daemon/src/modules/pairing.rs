@@ -1,7 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
-use libp2p::PeerId;
+use libp2p::{request_response::Message, PeerId};
 use log::{debug, info};
 use multiconnect_protocol::{
   local::peer::{L2PeerPairRequest, L3PeerPairResponse},
