@@ -32,6 +32,8 @@ pub trait MulticonnectModule: Send + Sync {
   async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx);
   /// Runs when the daemon recives a packet from the frontend
   async fn on_frontend_packet(&mut self, packet: Packet, ctx: &mut MulticonnectCtx);
+
+  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>);
 }
 
 /// Context that modules get and allows them to do things like send packets to the

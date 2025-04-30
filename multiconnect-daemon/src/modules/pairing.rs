@@ -8,18 +8,28 @@ use multiconnect_protocol::{
   p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   Device, Packet,
 };
-use tokio::time::Instant;
+use tokio::{
+  sync::{mpsc, Mutex},
+  time::Instant,
+};
 use uuid::Uuid;
+
+use crate::networking::PairingProtocolEvent;
 
 use super::{MulticonnectCtx, MulticonnectModule};
 
 pub struct PairingModule {
   pending_requests: HashMap<Uuid, (Instant, Packet, PeerId)>,
+  pairing_protocol_send: mpsc::Sender<PairingProtocolEvent>,
+  pairing_protocol_recv: Option<mpsc::Receiver<PairingProtocolEvent>>,
 }
 
 impl PairingModule {
-  pub fn new() -> Self {
-    Self { pending_requests: HashMap::new() }
+  pub fn new(
+    pairing_protocol_send: mpsc::Sender<PairingProtocolEvent>,
+    pairing_protocol_recv: mpsc::Receiver<PairingProtocolEvent>,
+  ) -> Self {
+    Self { pending_requests: HashMap::new(), pairing_protocol_recv: Some(pairing_protocol_recv), pairing_protocol_send }
   }
 }
 
@@ -94,6 +104,13 @@ impl MulticonnectModule for PairingModule {
         }
       }
       _ => {}
+    }
+  }
+
+  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) {
+    if let Some(ch) = self.pairing_protocol_recv.take() {
+      let ctx = ctx.clone();
+      tokio::spawn(async move {});
     }
   }
 }

@@ -43,3 +43,10 @@ message L4Refresh {
   // The packet id
   required uint32 id = 1;
 }
+
+// Should be L0 im lazy tho
+message L6PeerDiscovered {
+  required uint32 id = 1;
+  required string peer_id = 2;
+}
+
