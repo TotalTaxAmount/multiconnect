@@ -32,7 +32,7 @@ pub trait MulticonnectModule: Send + Sync {
   async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx);
   /// Runs when the daemon recives a packet from the frontend
   async fn on_frontend_packet(&mut self, packet: Packet, ctx: &mut MulticonnectCtx);
-
+  /// Runs once when the module is started
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>);
 }
 
@@ -161,6 +161,9 @@ impl ModuleManager {
   pub async fn start(&'static mut self) {
     let ctx = self.ctx.clone();
     let mut periodic_interval = time::interval(Duration::from_millis(20));
+    for module in self.modules.iter_mut() {
+      module.init(ctx.clone()).await;
+    }
 
     tokio::spawn(async move {
       loop {

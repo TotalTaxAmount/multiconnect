@@ -32,7 +32,7 @@ pub enum PairingProtocolEvent {
   SendRequest(PeerId, Packet),
   SendResponse(ResponseChannel<Packet>, Packet),
   RecvRequest(PeerId, Packet, ResponseChannel<Packet>),
-  RecvResponse(Peer, Packet),
+  RecvResponse(PeerId, Packet),
 }
 
 #[derive(NetworkBehaviour)]
@@ -79,7 +79,7 @@ impl NetworkManager {
     let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
 
     let (pairing_protocol_recv_tx, pairing_protocol_recv_rx) = mpsc::channel::<PairingProtocolEvent>(10);
-    let (pairing_protocol_send_tx, pairing_protocol_send_rx) = mpsc::channel::<PairingProtocolEvent>(10);
+    let (pairing_protocol_send_tx, mut pairing_protocol_send_rx) = mpsc::channel::<PairingProtocolEvent>(10);
 
     debug!("Initializing new swarm");
 
@@ -138,10 +138,12 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PairingProtocol(request_response::Event::Message { peer, message, .. })) => {
               match message {
-                Message::Request { request_id, request, channel } => {
-
+                Message::Request { request, channel, .. } => {
+                  let _ = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvRequest(peer, request, channel)).await;
                 },
-                Message::Response { request_id, response } => todo!(),
+                Message::Response { response, .. } => {
+                  let _ = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvResponse(peer, response)).await;
+                },
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::PacketRecived(source, packet))) => {
@@ -165,6 +167,14 @@ impl NetworkManager {
             debug!("Sending {:?} to {}", packet, peer_id);
             let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer_id, packet).await;
           },
+
+          command = pairing_protocol_send_rx.recv() => if let Some(command) = command {
+            match command {
+                PairingProtocolEvent::SendRequest(peer_id, packet) => { swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet); },
+                PairingProtocolEvent::SendResponse(response_channel, packet) => { let _ = swarm.behaviour_mut().pairing_protocol.send_response(response_channel, packet); },
+                _ => {},
+            };
+          }
 
         }
       }
