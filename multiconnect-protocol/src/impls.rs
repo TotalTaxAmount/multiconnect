@@ -44,7 +44,7 @@ impl L4Refresh {
 
 impl L0PeerFound {
   pub fn new(device: &Device) -> Self {
-    Self { id: Packet::create_id(), device: bincode::serialize(&device).unwrap() }
+    Self { id: Packet::create_id(), device: bincode::serialize(device).unwrap() }
   }
 }
 
@@ -63,6 +63,12 @@ impl L2PeerPairRequest {
 impl L3PeerPairResponse {
   pub fn new(accepted: bool, uuid: Uuid) -> Self {
     Self { id: Packet::create_id(), req_uuid: uuid.to_string(), accepted }
+  }
+}
+
+impl L6PeerDiscovered {
+  pub fn new(peer_id: &PeerId) -> Self {
+    Self { id: Packet::create_id(), peer_id: peer_id.to_string() }
   }
 }
 

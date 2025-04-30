@@ -113,6 +113,8 @@ pub enum Packet {
   L3PeerPairResponse(L3PeerPairResponse),
   /// Refresh packet
   L4Refresh(L4Refresh),
+  /// Peer discovred
+  L6PeerDiscovered(L6PeerDiscovered),
   /// Get metadata about a peer
   S1PeerMeta(S1PeerMeta), // TODO
                           // TransferStart(TransferStart),
@@ -161,7 +163,8 @@ impl Packet {
       6 => Ok(Packet::L2PeerPairRequest(L2PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       7 => Ok(Packet::L3PeerPairResponse(L3PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       8 => Ok(Packet::L4Refresh(L4Refresh::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
-      9 => Ok(Packet::S1PeerMeta(S1PeerMeta::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      9 => Ok(Packet::L6PeerDiscovered(L6PeerDiscovered::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      10 => Ok(Packet::S1PeerMeta(S1PeerMeta::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
 
       _ => {
         error!("Unknown packet type {}", packet_type);
@@ -189,8 +192,9 @@ impl Packet {
       Packet::L2PeerPairRequest(peer_pair_request)    => encode_packet(buf, 6, peer_pair_request)?,
       Packet::L3PeerPairResponse(peer_pair_response) => encode_packet(buf, 7, peer_pair_response)?,
       Packet::L4Refresh(refresh)                              => encode_packet(buf, 8, refresh)?,
+      Packet::L6PeerDiscovered(peer_discovered)        => encode_packet(buf, 9, peer_discovered)?,
       // Shared (daemon + client and p2p) packets
-      Packet::S1PeerMeta(peer_meta)                          => encode_packet(buf, 9, peer_meta)?,
+      Packet::S1PeerMeta(peer_meta)                          => encode_packet(buf, 10, peer_meta)?,
       // Packet::TransferStart(transfer_start) => encode_packet(&mut buf, 6, transfer_start)?,
       // Packet::TransferChunk(transfer_chunk) => encode_packet(&mut buf, 7, transfer_chunk)?,
       // Packet::TransferEnd(transfer_end) => encode_packet(&mut buf, 8, transfer_end)?,
