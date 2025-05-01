@@ -6,7 +6,7 @@ use libp2p::{
   request_response::{Event, Message, ResponseChannel},
   PeerId,
 };
-use log::debug;
+use log::{debug, error};
 use multiconnect_protocol::{Device, Packet, Peer};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
@@ -96,8 +96,6 @@ impl MulticonnectCtx {
 pub struct ModuleManager {
   /// A list of all registered modules
   modules: Vec<Box<dyn MulticonnectModule>>,
-  /// Pending requests
-  pending_requests: HashMap<Id<Target>, ResponseChannel<Packet>>,
   /// Reciver for packets coming from the frontend
   recv_frontend_packet_rx: broadcast::Receiver<Packet>,
   /// Reciver for packets coming from peers
@@ -122,7 +120,6 @@ impl ModuleManager {
         Device::this(network_manager.get_local_peer_id()),
       ))),
       modules: Vec::new(),
-      pending_requests: HashMap::new(),
       send_frontend_packet_tx: daemon.send_packet_channel(),
       send_peer_packet_tx: network_manager.send_packet_channel(),
       recv_frontend_packet_rx: daemon.recv_packet_channel(),
@@ -178,6 +175,8 @@ impl ModuleManager {
             debug!("Calling on_peer_packet");
             let mut ctx = ctx.lock().await;
             self.call_on_peer_packet(source, packet, &mut ctx).await;
+          } else {
+            error!("Error reciving peer packet channel");
           },
 
           target = self.send_packet_rx.recv() => if let Some(target) = target {

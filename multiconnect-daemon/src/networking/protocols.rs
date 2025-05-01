@@ -421,9 +421,9 @@ impl request_response::Codec for PairingCodec {
   where
     T: AsyncWrite + Unpin + Send,
   {
-    debug!("Write request");
+    debug!("Write request {:?}", req);
     let bytes: Vec<u8> = Packet::to_bytes(&req).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    debug!("Raw bytes: {:?}", bytes);
+    // debug!("Raw bytes: {:?}", bytes);
     io.write_all(&bytes).await?;
     io.flush().await
   }
@@ -434,9 +434,9 @@ impl request_response::Codec for PairingCodec {
   where
     T: AsyncWrite + Unpin + Send,
   {
-    debug!("Write request");
+    debug!("Write response {:?}", res);
     let bytes: Vec<u8> = Packet::to_bytes(&res).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    debug!("Raw bytes: {:?}", bytes);
+    // debug!("Raw bytes: {:?}", bytes);
     io.write_all(&bytes).await?;
     io.flush().await
   }

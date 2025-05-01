@@ -126,6 +126,7 @@ impl NetworkManager {
                   discovered_peers.insert(peer_id);
                   info!("Discovered peer: {}", peer_id);
                   let _ = recv_peer_packet_tx.send((this_device.peer, Packet::L6PeerDiscovered(L6PeerDiscovered::new(&peer_id)))); // Notify modules peer found
+                  info!("D");
                 }
               }
             }

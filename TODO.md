@@ -14,6 +14,8 @@
 
 ## Desktop
 
+- Fix race condition with network manager (ModuleManager::start() -> NetworkManger::start() and Daemon::start()) (ensure channels are setup before nm starts)
+
 ## Android
 
 - Android app

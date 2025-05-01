@@ -48,6 +48,7 @@ impl MulticonnectModule for PairingModule {
   async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx) {
     match packet {
       Packet::L6PeerDiscovered(packet) => {
+        debug!("L6 PD");
         let peer_id = PeerId::from_str(&packet.peer_id).unwrap();
         if ctx.this_device.peer > peer_id {
           debug!("[first] Sending metadata to {}", peer_id);
