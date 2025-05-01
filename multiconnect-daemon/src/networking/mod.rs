@@ -65,38 +65,69 @@ impl MulticonnectBehavior {
 
 pub struct NetworkManager {
   send_packet_tx: mpsc::Sender<(PeerId, Packet)>,
+  send_packet_rx: Option<mpsc::Receiver<(PeerId, Packet)>>,
+
   recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
+  recv_peer_packet_tx: broadcast::Sender<(PeerId, Packet)>,
+
   pairing_protocol_recv_rx: Option<mpsc::Receiver<PairingProtocolEvent>>,
+  pairing_protocol_recv_tx: mpsc::Sender<PairingProtocolEvent>,
+
+  pairing_protocol_send_rx: Option<mpsc::Receiver<PairingProtocolEvent>>,
   pairing_protocol_send_tx: mpsc::Sender<PairingProtocolEvent>,
-  local_peer_id: PeerId,
+
+  keys: Keypair,
 }
 
 impl NetworkManager {
-  pub async fn start() -> Result<Self, Box<dyn Error>> {
+  pub async fn new() -> Self {
+    let (send_packet_tx, send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
+    let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
+    let (pairing_protocol_recv_tx, pairing_protocol_recv_rx) = mpsc::channel::<PairingProtocolEvent>(10);
+    let (pairing_protocol_send_tx, pairing_protocol_send_rx) = mpsc::channel::<PairingProtocolEvent>(10);
+
+    let keys = Self::get_keys().await.unwrap();
+
+    Self {
+      send_packet_tx,
+      send_packet_rx: Some(send_packet_rx),
+
+      recv_peer_packet_rx,
+      recv_peer_packet_tx,
+
+      pairing_protocol_recv_tx,
+      pairing_protocol_recv_rx: Some(pairing_protocol_recv_rx),
+      pairing_protocol_send_tx,
+      pairing_protocol_send_rx: Some(pairing_protocol_send_rx),
+      keys,
+    }
+  }
+  pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
-    let (send_packet_tx, mut send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
-    let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
+    // let (send_packet_tx, mut send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
+    // let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
 
-    let (pairing_protocol_recv_tx, pairing_protocol_recv_rx) = mpsc::channel::<PairingProtocolEvent>(10);
-    let (pairing_protocol_send_tx, mut pairing_protocol_send_rx) = mpsc::channel::<PairingProtocolEvent>(10);
+    // let (pairing_protocol_recv_tx, pairing_protocol_recv_rx) = mpsc::channel::<PairingProtocolEvent>(10);
+    // let (pairing_protocol_send_tx, mut pairing_protocol_send_rx) = mpsc::channel::<PairingProtocolEvent>(10);
+    let mut send_packet_rx = self.send_packet_rx.take().unwrap();
+    let mut pairing_protocol_send_rx = self.pairing_protocol_send_rx.take().unwrap();
+    let recv_peer_packet_tx = self.recv_peer_packet_tx.clone();
+    let pairing_protocol_recv_tx = self.pairing_protocol_recv_tx.clone();
 
     debug!("Initializing new swarm");
-
-    let keys = Self::get_keys().await?;
-    let local_peer_id = keys.public().to_peer_id();
     let mut discovered_peers: HashSet<PeerId> = HashSet::new();
 
-    let this_device = Device::this(local_peer_id);
+    let this_device = Device::this(self.get_local_peer_id());
     debug!("Current device: {:?}", this_device);
 
-    let mut swarm = SwarmBuilder::with_existing_identity(keys.clone())
+    let mut swarm = SwarmBuilder::with_existing_identity(self.keys.clone())
       .with_tokio()
       .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
       .with_behaviour(|key| MulticonnectBehavior::new(key).unwrap())?
       .build();
 
-    info!("Local peer id: {}", local_peer_id);
+    info!("Local peer id: {}", self.get_local_peer_id());
 
     if let Some(port) = port_check::free_local_ipv4_port_in_range(1590..=1600) {
       let addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", port).parse()?;
@@ -140,11 +171,17 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PairingProtocol(request_response::Event::Message { peer, message, .. })) => {
               match message {
                 Message::Request { request, channel, .. } => {
-                  let _ = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvRequest(peer, request, channel)).await;
+                  debug!("Recv request");
+                  if let Err(e) = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvRequest(peer, request, channel)).await {
+                    warn!("Error sending request on channel: {}", e);
+                  }
                 },
                 Message::Response { response, .. } => {
-                  let _ = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvResponse(peer, response)).await;
-                },
+                  debug!("Recv response");
+                  if let Err(e) = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvResponse(peer, response)).await {
+                    warn!("Error sending response on channel: {}", e);
+                  }
+                }
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::PacketRecived(source, packet))) => {
@@ -181,13 +218,7 @@ impl NetworkManager {
       }
     });
 
-    Ok(Self {
-      send_packet_tx,
-      recv_peer_packet_rx,
-      local_peer_id,
-      pairing_protocol_recv_rx: Some(pairing_protocol_recv_rx),
-      pairing_protocol_send_tx,
-    })
+    Ok(())
   }
   /**
    * Get saved keys or generate new ones if they don't exist
@@ -216,7 +247,7 @@ impl NetworkManager {
   }
 
   pub fn get_local_peer_id(&self) -> PeerId {
-    self.local_peer_id
+    self.keys.public().to_peer_id()
   }
 
   pub fn send_packet_channel(&self) -> mpsc::Sender<(PeerId, Packet)> {

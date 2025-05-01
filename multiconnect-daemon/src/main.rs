@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
   let daemon = Daemon::new(args.port).await?;
 
-  let mut network_manager = NetworkManager::start().await?;
+  let mut network_manager = NetworkManager::new().await;
   let pairing_module = PairingModule::new(
     network_manager.send_pairing_protocol_channel(),
     network_manager.get_pairing_protocol_recv().unwrap(),
@@ -40,8 +40,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
   module_manager.register(pairing_module);
   // module_manager.register(Discovery);
 
-  module_manager.start().await;
-  let _ = daemon.start().await;
-
+  let _ = module_manager.start().await;
   Ok(())
 }

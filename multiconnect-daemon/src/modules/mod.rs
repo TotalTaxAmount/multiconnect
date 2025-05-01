@@ -96,16 +96,12 @@ impl MulticonnectCtx {
 pub struct ModuleManager {
   /// A list of all registered modules
   modules: Vec<Box<dyn MulticonnectModule>>,
-  /// Reciver for packets coming from the frontend
-  recv_frontend_packet_rx: broadcast::Receiver<Packet>,
-  /// Reciver for packets coming from peers
-  recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
-  /// Sender for peer related packets
-  send_peer_packet_tx: mpsc::Sender<(PeerId, Packet)>,
+  /// Daemon
+  daemon: SharedDaemon,
+  /// Network Manager
+  network_manager: NetworkManager,
   // Sender from sending frontend packets
-  send_frontend_packet_tx: mpsc::Sender<Packet>,
-  /// Packets to send from modules
-  send_packet_rx: mpsc::Receiver<Target>,
+  send_packet_rx: Option<mpsc::Receiver<Target>>,
   /// Context that is shared between all modules
   ctx: Arc<Mutex<MulticonnectCtx>>,
 }
@@ -120,11 +116,9 @@ impl ModuleManager {
         Device::this(network_manager.get_local_peer_id()),
       ))),
       modules: Vec::new(),
-      send_frontend_packet_tx: daemon.send_packet_channel(),
-      send_peer_packet_tx: network_manager.send_packet_channel(),
-      recv_frontend_packet_rx: daemon.recv_packet_channel(),
-      recv_peer_packet_rx: network_manager.recv_packet_channel(),
-      send_packet_rx,
+      daemon,
+      network_manager,
+      send_packet_rx: Some(send_packet_rx),
     }
   }
 
@@ -134,64 +128,64 @@ impl ModuleManager {
     self.modules.push(boxed);
   }
 
-  /// Calls the `perodic`` function of every registerd module
-  pub async fn call_perodic(&mut self, ctx: &mut MulticonnectCtx) {
-    for module in self.modules.iter_mut() {
-      module.periodic(ctx).await;
-    }
-  }
-
-  /// Calls the `on_peer_packet` function of every register module
-  pub async fn call_on_peer_packet(&mut self, id: PeerId, packet: Packet, ctx: &mut MulticonnectCtx) {
-    for module in self.modules.iter_mut() {
-      module.on_peer_packet(packet.clone(), id, ctx).await;
-    }
-  }
-
   /// Calls the `on_frontend_packet` function of every register module
-  pub async fn call_on_frontend_packet(&mut self, packet: Packet, ctx: &mut MulticonnectCtx) {
-    for module in self.modules.iter_mut() {
-      module.on_frontend_packet(packet.clone(), ctx).await;
-    }
-  }
 
-  pub async fn start(&'static mut self) {
+  pub async fn start(&'static mut self) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = self.ctx.clone();
     let mut periodic_interval = time::interval(Duration::from_millis(20));
+
+    let daemon_clone = self.daemon.clone();
+    let mut recv_frontend_packet_rx = self.daemon.recv_packet_channel();
+    let mut recv_peer_packet_rx = self.network_manager.recv_packet_channel();
+    let send_frontend_packet_tx = self.daemon.send_packet_channel();
+    let send_peer_packet_tx = self.network_manager.send_packet_channel();
+
     for module in self.modules.iter_mut() {
       module.init(ctx.clone()).await;
     }
 
+    let mut send_packet_rx = self.send_packet_rx.take().unwrap();
+    let mut modules = std::mem::take(&mut self.modules);
     tokio::spawn(async move {
       loop {
         tokio::select! {
-          event = self.recv_frontend_packet_rx.recv() => if let Ok(packet) = event {
+          event = recv_frontend_packet_rx.recv() => if let Ok(packet) = event {
             debug!("Calling on_frontend_packet");
             let mut ctx = ctx.lock().await;
-            self.call_on_frontend_packet(packet, &mut ctx).await;
+            for module in modules.iter_mut() {
+              module.on_frontend_packet(packet.clone(), &mut ctx).await;
+            }
           },
 
-          event = self.recv_peer_packet_rx.recv() => if let Ok((source, packet)) = event {
+          event = recv_peer_packet_rx.recv() => if let Ok((source, packet)) = event {
             debug!("Calling on_peer_packet");
             let mut ctx = ctx.lock().await;
-            self.call_on_peer_packet(source, packet, &mut ctx).await;
+            for module in modules.iter_mut() {
+              module.on_peer_packet(packet.clone(), source, &mut ctx).await;
+            }
           } else {
             error!("Error reciving peer packet channel");
           },
 
-          target = self.send_packet_rx.recv() => if let Some(target) = target {
+          target = send_packet_rx.recv() => if let Some(target) = target {
 
             match target {
-              Target::Local(packet) => { let _ = self.send_frontend_packet_tx.send(packet.to_owned()).await; },
-              Target::Peer(peer_id, packet) => { let _ = self.send_peer_packet_tx.send((peer_id, packet)).await; },
+              Target::Local(packet) => { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
+              Target::Peer(peer_id, packet) => { let _ = send_peer_packet_tx.send((peer_id, packet)).await; },
             };
           },
           _ = periodic_interval.tick() => {
             let mut ctx = ctx.lock().await;
-            self.call_perodic(&mut ctx).await;
+            for module in modules.iter_mut() {
+              module.periodic(&mut ctx).await;
+            }
           }
         }
       }
     });
+
+    self.network_manager.start().await?;
+    daemon_clone.start().await;
+    Ok(())
   }
 }

@@ -383,7 +383,6 @@ impl request_response::Codec for PairingCodec {
   where
     T: AsyncRead + Unpin + Send,
   {
-    debug!("Read request");
     let mut len_buf = [0u8; 2];
     io.read_exact(&mut len_buf).await?;
     let len = u16::from_be_bytes(len_buf) as usize;
@@ -391,9 +390,10 @@ impl request_response::Codec for PairingCodec {
 
     let mut buf = vec![0u8; len];
     io.read_exact(&mut buf).await?;
-    debug!("Raw packet: {:?}", buf);
 
-    Packet::from_bytes(&buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+    let packet = Packet::from_bytes(&buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    debug!("Read request {:?}", packet);
+    Ok(packet)
   }
 
   #[doc = " Reads a response from the given I/O stream according to the"]
@@ -402,7 +402,6 @@ impl request_response::Codec for PairingCodec {
   where
     T: AsyncRead + Unpin + Send,
   {
-    debug!("Read response");
     let mut len_buf = [0u8; 2];
     io.read_exact(&mut len_buf).await?;
     let len = u16::from_be_bytes(len_buf) as usize;
@@ -410,9 +409,11 @@ impl request_response::Codec for PairingCodec {
 
     let mut buf = vec![0u8; len];
     io.read_exact(&mut buf).await?;
-    debug!("Raw packet: {:?}", buf);
+    // debug!("Raw packet: {:?}", buf);
 
-    Packet::from_bytes(&buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))
+    let packet = Packet::from_bytes(&buf).map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    debug!("Read response {:?}", packet);
+    Ok(packet)
   }
 
   #[doc = " Writes a request to the given I/O stream according to the"]

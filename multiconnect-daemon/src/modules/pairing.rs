@@ -129,45 +129,47 @@ impl MulticonnectModule for PairingModule {
     if let Some(mut ch) = self.pairing_protocol_recv.take() {
       let pairing_protocol_send = self.pairing_protocol_send.clone();
       tokio::spawn(async move {
-        tokio::select! {
-          event = ch.recv() => if let Some(event) = event {
-            match event {
-                PairingProtocolEvent::RecvRequest(peer_id, packet, response_channel) => {
-                  match packet {
-                    Packet::S1PeerMeta(packet) => {
-                      let device = Device::from_meta(packet, peer_id);
-                      debug!("Recvived device meta {:?}", device);
+        loop {
+          tokio::select! {
+            event = ch.recv() => if let Some(event) = event {
+              match event {
+                  PairingProtocolEvent::RecvRequest(peer_id, packet, response_channel) => {
+                    match packet {
+                      Packet::S1PeerMeta(packet) => {
+                        let device = Device::from_meta(packet, peer_id);
+                        debug!("Recvived device meta {:?}", device);
 
-                      let mut guard = ctx.lock().await;
-                      guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                      guard.add_device(device);
+                        let mut guard = ctx.lock().await;
+                        guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
+                        guard.add_device(device);
 
-                      debug!("[second] Sending meta to {}", peer_id);
-                      let _ = pairing_protocol_send.send(PairingProtocolEvent::SendResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
+                        debug!("[second] Sending meta to {}", peer_id);
+                        let _ = pairing_protocol_send.send(PairingProtocolEvent::SendResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
 
-                    },
-                    Packet::P2PeerPairRequest(packet) => {},
-                    _ => {
-                      warn!("Unexpected packet recived");
+                      },
+                      Packet::P2PeerPairRequest(packet) => {},
+                      _ => {
+                        warn!("Unexpected packet recived");
+                      }
                     }
-                  }
-                },
-                PairingProtocolEvent::RecvResponse(peer_id, packet) => {
-                  match packet {
-                    Packet::S1PeerMeta(packet) => {
-                      let device = Device::from_meta(packet, peer_id);
-                      debug!("Recivied device meta: {:?}", device);
-                      let mut guard = ctx.lock().await;
-                      guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                      guard.add_device(device);
-                    },
-                    Packet::P3PeerPairResponse(packet) => {},
-                    _ => {
-                      warn!("Unexpected packet recivied");
-                    },
-                  }
-                },
-                _ => {}
+                  },
+                  PairingProtocolEvent::RecvResponse(peer_id, packet) => {
+                    match packet {
+                      Packet::S1PeerMeta(packet) => {
+                        let device = Device::from_meta(packet, peer_id);
+                        debug!("Recivied device meta: {:?}", device);
+                        let mut guard = ctx.lock().await;
+                        guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
+                        guard.add_device(device);
+                      },
+                      Packet::P3PeerPairResponse(packet) => {},
+                      _ => {
+                        warn!("Unexpected packet recivied");
+                      },
+                    }
+                  },
+                  _ => {}
+              }
             }
           }
         }
