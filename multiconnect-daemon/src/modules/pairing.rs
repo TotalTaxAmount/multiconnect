@@ -1,8 +1,11 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use bincode::de;
-use libp2p::{request_response::Message, PeerId};
+use libp2p::{
+  request_response::{Message, ResponseChannel},
+  PeerId,
+};
 use log::{debug, info, warn};
 use multiconnect_protocol::{
   local::peer::{L0PeerFound, L2PeerPairRequest, L3PeerPairResponse},
@@ -12,7 +15,7 @@ use multiconnect_protocol::{
 };
 use tokio::{
   sync::{mpsc, Mutex},
-  time::Instant,
+  time::{interval, Instant, Interval},
 };
 use uuid::Uuid;
 
@@ -22,10 +25,12 @@ use super::{MulticonnectCtx, MulticonnectModule};
 
 /// Pairing Module:
 /// Handles discovery and pairing combined
+/// TODO: GC res channels
 pub struct PairingModule {
-  pending_requests: HashMap<Uuid, (Instant, Packet, PeerId)>,
+  pending_requests: Arc<Mutex<HashMap<Uuid, (Instant, Packet, PeerId)>>>,
   pairing_protocol_send: mpsc::Sender<PairingProtocolEvent>,
   pairing_protocol_recv: Option<mpsc::Receiver<PairingProtocolEvent>>,
+  res_channels: Arc<Mutex<HashMap<PeerId, ResponseChannel<Packet>>>>,
 }
 
 impl PairingModule {
@@ -33,22 +38,25 @@ impl PairingModule {
     pairing_protocol_send: mpsc::Sender<PairingProtocolEvent>,
     pairing_protocol_recv: mpsc::Receiver<PairingProtocolEvent>,
   ) -> Self {
-    Self { pending_requests: HashMap::new(), pairing_protocol_recv: Some(pairing_protocol_recv), pairing_protocol_send }
+    Self {
+      pending_requests: Arc::new(Mutex::new(HashMap::new())),
+      pairing_protocol_recv: Some(pairing_protocol_recv),
+      pairing_protocol_send,
+      res_channels: Arc::new(Mutex::new(HashMap::new())),
+    }
   }
 }
 
 #[async_trait]
 impl MulticonnectModule for PairingModule {
   #[doc = " Runs every 20ms, used for background tasks/other stuff service is doing"]
-  async fn periodic(&mut self, _ctx: &mut MulticonnectCtx) {
-    self.pending_requests.retain(|_, (instant, _, _)| instant.elapsed().as_secs() < 60);
-  }
+  async fn periodic(&mut self, _ctx: &mut MulticonnectCtx) {}
 
+  /// No real peer to pper happens here, this is just for discovery (easy way to pass msgs is to send packets from self on channel)
   #[doc = " Runs when the swarm recivies a packet from another peer"]
-  async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx) {
+  async fn on_peer_packet(&mut self, packet: Packet, _source: PeerId, ctx: &mut MulticonnectCtx) {
     match packet {
       Packet::L6PeerDiscovered(packet) => {
-        debug!("L6 PD");
         let peer_id = PeerId::from_str(&packet.peer_id).unwrap();
         if ctx.this_device.peer > peer_id {
           debug!("[first] Sending metadata to {}", peer_id);
@@ -67,42 +75,10 @@ impl MulticonnectModule for PairingModule {
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
         self
           .pending_requests
+          .lock()
+          .await
           .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer)); // Add the request to pending requests so we know if we get a response
         ctx.send_to_peer(device.peer, Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid))).await;
-        // Send the request to the peer
-      }
-      Packet::P2PeerPairRequest(peer_pair_request) => {
-        info!("Received pairing request from {:?}, req_id = {}", source, peer_pair_request.req_uuid);
-        let uuid = Uuid::from_str(&peer_pair_request.req_uuid).unwrap();
-        let device = bincode::deserialize::<Device>(&peer_pair_request.device).unwrap();
-        self
-          .pending_requests
-          .insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(peer_pair_request.clone()), source));
-
-        ctx.send_to_frontend(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await;
-      }
-      Packet::P3PeerPairResponse(peer_pair_response) => {
-        info!(
-          "Received paring response: id = {}, res = {:?}",
-          peer_pair_response.req_uuid, peer_pair_response.accepted
-        );
-        let uuid = Uuid::from_str(&peer_pair_response.req_uuid).unwrap();
-        debug!("uuid = {}, pending = {:?}", uuid, self.pending_requests);
-        if let Some((_, Packet::L2PeerPairRequest(req), _)) = self.pending_requests.remove(&uuid) {
-          debug!("Found a valid request for a response");
-          if peer_pair_response.accepted {
-            let device = bincode::deserialize::<Device>(&req.device).unwrap();
-            if let Some((_, paired)) = ctx.get_device_mut(&device.peer) {
-              info!("Successfully paired with: {}", device.peer);
-              *paired = true;
-            }
-            ctx
-              .send_to_frontend(Packet::L3PeerPairResponse(L3PeerPairResponse::new(peer_pair_response.accepted, uuid)))
-              .await;
-          } else {
-            info!("Pairing request denied")
-          }
-        }
       }
       _ => {}
     }
@@ -114,11 +90,39 @@ impl MulticonnectModule for PairingModule {
       Packet::L3PeerPairResponse(packet) => {
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
         // Check if there is a pending request for that id
-        if let Some((_, Packet::P2PeerPairRequest(_req), source)) = self.pending_requests.remove(&uuid) {
-          debug!("Sending back response");
-          // Send the response
-          let _ =
-            ctx.send_to_peer(source, Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted))).await;
+        if let Some((_, Packet::P2PeerPairRequest(_req), source)) = self.pending_requests.lock().await.remove(&uuid) {
+          if let Some(ch) = self.res_channels.lock().await.remove(&source) {
+            debug!("Sending back response");
+            // Send the response
+            let _ = self
+              .pairing_protocol_send
+              .send(PairingProtocolEvent::SendResponse(
+                ch,
+                Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted)),
+              ))
+              .await;
+          } else {
+            warn!("Failed to find response channel for request")
+          }
+        }
+      }
+      Packet::L2PeerPairRequest(packet) => {
+        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
+        if ctx.devices.contains_key(&device.peer) {
+          debug!("Sending pair request to: {}, id = {}", device.peer, packet.req_uuid);
+          let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+          self
+            .pending_requests
+            .lock()
+            .await
+            .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer));
+          let _ = self
+            .pairing_protocol_send
+            .send(PairingProtocolEvent::SendRequest(
+              device.peer,
+              Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid)),
+            ))
+            .await;
         }
       }
       _ => {}
@@ -128,6 +132,10 @@ impl MulticonnectModule for PairingModule {
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) {
     if let Some(mut ch) = self.pairing_protocol_recv.take() {
       let pairing_protocol_send = self.pairing_protocol_send.clone();
+      let pending_requests = self.pending_requests.clone();
+      let res_channels = self.res_channels.clone();
+      let mut retain_interval = interval(Duration::from_secs(10));
+
       tokio::spawn(async move {
         loop {
           tokio::select! {
@@ -147,7 +155,18 @@ impl MulticonnectModule for PairingModule {
                         let _ = pairing_protocol_send.send(PairingProtocolEvent::SendResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
 
                       },
-                      Packet::P2PeerPairRequest(packet) => {},
+                      Packet::P2PeerPairRequest(packet) => {
+                        info!("Recivied pairing request from {}, req_id = {}", peer_id, packet.req_uuid);
+
+                        let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+                        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
+
+                        pending_requests.lock().await.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(packet.clone()), peer_id));
+                        res_channels.lock().await.insert(peer_id, response_channel);
+
+                        let guard = ctx.lock().await;
+                        guard.send_to_frontend(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await;
+                      },
                       _ => {
                         warn!("Unexpected packet recived");
                       }
@@ -162,7 +181,23 @@ impl MulticonnectModule for PairingModule {
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                         guard.add_device(device);
                       },
-                      Packet::P3PeerPairResponse(packet) => {},
+                      Packet::P3PeerPairResponse(packet) => {
+                        info!("Received paring response: uuid = {}, accepted = {}", packet.req_uuid, packet.accepted);
+                        let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+                        if let Some((_, Packet::L2PeerPairRequest(req), _)) = pending_requests.lock().await.remove(&uuid) {
+                          debug!("Found request for response");
+                          let mut guard = ctx.lock().await;
+                          if packet.accepted {
+                            let device = bincode::deserialize::<Device>(&req.device).unwrap();
+                            if let Some((_, paired)) = guard.get_device_mut(&device.peer) {
+                              info!("Sucessfully paired with: {}", device.peer);
+                              *paired = true;
+                            }
+                          }
+
+                          guard.send_to_frontend(Packet::L3PeerPairResponse(L3PeerPairResponse::new(packet.accepted, uuid))).await;
+                        }
+                      },
                       _ => {
                         warn!("Unexpected packet recivied");
                       },
@@ -170,6 +205,10 @@ impl MulticonnectModule for PairingModule {
                   },
                   _ => {}
               }
+            },
+
+            _ = retain_interval.tick() => {
+              pending_requests.lock().await.retain(|_, (instant, _, _)| instant.elapsed().as_secs() < 60);
             }
           }
         }
