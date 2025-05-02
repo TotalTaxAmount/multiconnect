@@ -45,18 +45,18 @@ impl Store {
     file.write_all(&serialized).unwrap();
   }
 
-  pub fn store_peer(&mut self, peer_id: PeerId, peer: Peer) {
+  pub async fn store_peer(&mut self, peer_id: PeerId, peer: Peer) {
     self.peers.insert(peer_id, peer);
-    self.save();
+    self.save().await;
   }
 
   pub fn retrieve_peer(&self, peer_id: PeerId) -> Option<&Peer> {
     self.peers.get(&peer_id)
   }
 
-  pub fn remove_peer(&mut self, peer_id: PeerId) -> Option<Peer> {
+  pub async fn remove_peer(&mut self, peer_id: PeerId) -> Option<Peer> {
     let peer = self.peers.remove(&peer_id);
-    self.save();
+    self.save().await;
     peer
   }
 }

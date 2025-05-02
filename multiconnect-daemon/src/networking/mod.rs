@@ -28,11 +28,23 @@ use tokio::{
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug)]
-pub enum PairingProtocolEvent {
-  SendRequest(PeerId, Packet),
-  SendResponse(ResponseChannel<Packet>, Packet),
+pub enum MulticonnectNetworkEvent {
+  // SendRequest(PeerId, Packet),
+  // SendResponse(ResponseChannel<Packet>, Packet),
   RecvRequest(PeerId, Packet, ResponseChannel<Packet>),
   RecvResponse(PeerId, Packet),
+  ConnectionOpenRequest(PeerId),
+  ConnectionClosed(PeerId),
+}
+
+pub enum NetworkCommand {
+  SendPacket(PeerId, Packet),
+  ApproveStream(PeerId),
+  DenyStream(PeerId),
+  OpenStream(PeerId),
+  CloseStream(PeerId),
+  SendPacketProtocolRequest(PeerId, Packet),
+  SendPacketProtocolResponse(ResponseChannel<Packet>, Packet),
 }
 
 #[derive(NetworkBehaviour)]
@@ -64,51 +76,44 @@ impl MulticonnectBehavior {
 }
 
 pub struct NetworkManager {
-  send_packet_tx: mpsc::Sender<(PeerId, Packet)>,
-  send_packet_rx: Option<mpsc::Receiver<(PeerId, Packet)>>,
+  send_command_tx: mpsc::Sender<NetworkCommand>,
+  send_command_rx: Option<mpsc::Receiver<NetworkCommand>>,
 
   recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
   recv_peer_packet_tx: broadcast::Sender<(PeerId, Packet)>,
 
-  pairing_protocol_recv_rx: Option<mpsc::Receiver<PairingProtocolEvent>>,
-  pairing_protocol_recv_tx: mpsc::Sender<PairingProtocolEvent>,
-
-  pairing_protocol_send_rx: Option<mpsc::Receiver<PairingProtocolEvent>>,
-  pairing_protocol_send_tx: mpsc::Sender<PairingProtocolEvent>,
+  mc_network_event_recv_rx: Option<mpsc::Receiver<MulticonnectNetworkEvent>>,
+  mc_network_event_recv_tx: mpsc::Sender<MulticonnectNetworkEvent>,
 
   keys: Keypair,
 }
 
 impl NetworkManager {
   pub async fn new() -> Self {
-    let (send_packet_tx, send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
+    let (send_command_tx, send_command_rx) = mpsc::channel::<NetworkCommand>(100);
     let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
-    let (pairing_protocol_recv_tx, pairing_protocol_recv_rx) = mpsc::channel::<PairingProtocolEvent>(10);
-    let (pairing_protocol_send_tx, pairing_protocol_send_rx) = mpsc::channel::<PairingProtocolEvent>(10);
-
+    let (mc_network_event_recv_tx, mc_network_event_recv_rx) = mpsc::channel::<MulticonnectNetworkEvent>(10);
     let keys = Self::get_keys().await.unwrap();
 
     Self {
-      send_packet_tx,
-      send_packet_rx: Some(send_packet_rx),
+      send_command_tx,
+      send_command_rx: Some(send_command_rx),
 
       recv_peer_packet_rx,
       recv_peer_packet_tx,
 
-      pairing_protocol_recv_tx,
-      pairing_protocol_recv_rx: Some(pairing_protocol_recv_rx),
-      pairing_protocol_send_tx,
-      pairing_protocol_send_rx: Some(pairing_protocol_send_rx),
+      mc_network_event_recv_tx,
+      mc_network_event_recv_rx: Some(mc_network_event_recv_rx),
+
       keys,
     }
   }
   pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
-    let mut send_packet_rx = self.send_packet_rx.take().unwrap();
-    let mut pairing_protocol_send_rx = self.pairing_protocol_send_rx.take().unwrap();
+    let mut send_packet_rx = self.send_command_rx.take().unwrap();
     let recv_peer_packet_tx = self.recv_peer_packet_tx.clone();
-    let pairing_protocol_recv_tx = self.pairing_protocol_recv_tx.clone();
+    let mc_network_event_recv_tx = self.mc_network_event_recv_tx.clone();
 
     debug!("Initializing new swarm");
     let mut discovered_peers: HashSet<PeerId> = HashSet::new();
@@ -167,13 +172,13 @@ impl NetworkManager {
               match message {
                 Message::Request { request, channel, .. } => {
                   debug!("Recv request");
-                  if let Err(e) = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvRequest(peer, request, channel)).await {
+                  if let Err(e) = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::RecvRequest(peer, request, channel)).await {
                     warn!("Error sending request on channel: {}", e);
                   }
                 },
                 Message::Response { response, .. } => {
                   debug!("Recv response");
-                  if let Err(e) = pairing_protocol_recv_tx.send(PairingProtocolEvent::RecvResponse(peer, response)).await {
+                  if let Err(e) = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::RecvResponse(peer, response)).await {
                     warn!("Error sending response on channel: {}", e);
                   }
                 }
@@ -184,32 +189,53 @@ impl NetworkManager {
               let _ = recv_peer_packet_tx.send((source, packet));
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionOpenRequest(peer))) => {
-              // TODO: Check if paired
-              // swarm.behaviour_mut().packet_protocol.approve_inbound_stream(peer.clone());
-
-              // let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer, Packet::P0Ping(P0Ping::new())).await;
-              // if {}
+              debug!("Stream open request from {}", peer);
+              let _ = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::ConnectionOpenRequest(peer)).await;
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionClosed(peer))) => {
               info!("Channel to {} closed", peer);
+              let _ = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::ConnectionClosed(peer));
             }
             _ => {
               trace!("Event: {:?}", event);
             },
           },
-          res = send_packet_rx.recv() => if let Some((peer_id, packet)) = res {
-            debug!("Sending {:?} to {}", packet, peer_id);
-            let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer_id, packet).await;
+          cmd = send_packet_rx.recv() => if let Some(cmd) = cmd {
+            match cmd {
+                NetworkCommand::SendPacket(peer_id, packet) => {
+                  debug!("Sending {:?} to {}", packet, peer_id);
+                  let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer_id, packet).await;
+                },
+                NetworkCommand::ApproveStream(peer_id) => {
+                  debug!("Approving stream for {}", peer_id);
+                  let _ = swarm.behaviour_mut().packet_protocol.approve_inbound_stream(peer_id);
+                },
+                NetworkCommand::DenyStream(peer_id) => {
+                  debug!("Denying stream for {}", peer_id);
+                  let _ = swarm.behaviour_mut().packet_protocol.deny_inbound_stream(&peer_id);
+                },
+                NetworkCommand::OpenStream(peer_id) => {
+                  debug!("Initation stream open for {}", peer_id);
+                  let _ = swarm.behaviour_mut().packet_protocol.open_stream(peer_id);
+                },
+                NetworkCommand::CloseStream(peer_id) => {
+                  debug!("Closing stream for {}", peer_id);
+                  todo!()
+                },
+                NetworkCommand::SendPacketProtocolRequest(peer_id, packet) => {
+                  debug!("Sending pairing protocol request to {}", peer_id);
+                  let _ = swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
+                },
+                NetworkCommand::SendPacketProtocolResponse(ch, packet) => {
+                  if ch.is_open() {
+                    debug!("Sending pairing protocl response");
+                    let _ = swarm.behaviour_mut().pairing_protocol.send_response(ch, packet);
+                  } else {
+                    warn!("Cannot send response on closed channel");
+                  }
+                }
+            }
           },
-
-          command = pairing_protocol_send_rx.recv() => if let Some(command) = command {
-            match command {
-                PairingProtocolEvent::SendRequest(peer_id, packet) => { swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet); },
-                PairingProtocolEvent::SendResponse(response_channel, packet) => { let _ = swarm.behaviour_mut().pairing_protocol.send_response(response_channel, packet); },
-                _ => {},
-            };
-          }
-
         }
       }
     });
@@ -246,24 +272,20 @@ impl NetworkManager {
     self.keys.public().to_peer_id()
   }
 
-  pub fn send_packet_channel(&self) -> mpsc::Sender<(PeerId, Packet)> {
-    self.send_packet_tx.clone()
+  pub fn send_command_channel(&self) -> mpsc::Sender<NetworkCommand> {
+    self.send_command_tx.clone()
   }
 
   pub fn recv_packet_channel(&self) -> broadcast::Receiver<(PeerId, Packet)> {
     self.recv_peer_packet_rx.resubscribe()
   }
 
-  pub fn get_pairing_protocol_recv(&mut self) -> Option<mpsc::Receiver<PairingProtocolEvent>> {
-    if let Some(ch) = self.pairing_protocol_recv_rx.take() {
+  pub fn get_mc_event_recv(&mut self) -> Option<mpsc::Receiver<MulticonnectNetworkEvent>> {
+    if let Some(ch) = self.mc_network_event_recv_rx.take() {
       return Some(ch);
     }
     warn!("Attempted to get channel when it has already been taken");
     None
-  }
-
-  pub fn send_pairing_protocol_channel(&self) -> mpsc::Sender<PairingProtocolEvent> {
-    self.pairing_protocol_send_tx.clone()
   }
 }
 #[cfg(test)]

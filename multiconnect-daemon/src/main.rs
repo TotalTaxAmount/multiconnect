@@ -32,10 +32,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
   let daemon = Daemon::new(args.port).await?;
 
   let mut network_manager = NetworkManager::new().await;
-  let pairing_module = PairingModule::new(
-    network_manager.send_pairing_protocol_channel(),
-    network_manager.get_pairing_protocol_recv().unwrap(),
-  );
+  let pairing_module =
+    PairingModule::new(network_manager.send_command_channel(), network_manager.get_mc_event_recv().unwrap());
   let module_manager = Box::leak(Box::new(ModuleManager::new(network_manager, daemon.clone())));
   module_manager.register(pairing_module);
   // module_manager.register(Discovery);

@@ -19,26 +19,32 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::networking::PairingProtocolEvent;
+use crate::networking::{MulticonnectNetworkEvent, NetworkCommand};
 
 use super::{MulticonnectCtx, MulticonnectModule};
 
 /// Pairing Module:
 /// Handles discovery and pairing
+/// Also opens streams to already paired peers and decides weather or not to
+/// accept a inbound stream
 ///
 /// **Discovery**:
 ///   - Peer is discovored on network via mDNS
-///   - Lexocgphicly decide which peer should send pairing protocl request containing a S1PeerMeta of itself
-///   - Other peer recivies S1PeerMeta and adds the device to it's discovred devices
+///   - Lexocgphicly decide which peer should send pairing protocl request
+///     containing a S1PeerMeta of itself
+///   - Other peer recivies S1PeerMeta and adds the device to it's discovred
+///     devices
 ///   - Other peer sends a response with a S1PeerMeta of itself
 ///   - Sender adds other device to discovred devices
 ///
 /// **Pairing**:
 ///  - *Sending*:
 ///     - Recivies a L2PeerPairRequest from the frontend
-///     - Add the request to pending requets and send a P2PeerPairRequest to the target peer
+///     - Add the request to pending requets and send a P2PeerPairRequest to the
+///       target peer
 ///     - Recvive a P3PeerPairResponse from a peer and match it to a request
-///     - If its accepted add it it to pairied peers (TODO: Also save to disk to auto pair later)
+///     - If its accepted add it it to pairied peers (TODO: Also save to disk to
+///       auto pair later)
 ///     - Send result to frontend
 ///  - *Reciving*:
 ///     - Recivie a P2PairRequest and add it to pending requests
@@ -51,16 +57,16 @@ pub struct PairingModule {
   pending_requests: Arc<Mutex<HashMap<Uuid, (Instant, Packet, PeerId)>>>,
   /// Response channels for requests
   res_channels: Arc<Mutex<HashMap<PeerId, (Instant, ResponseChannel<Packet>)>>>,
-  /// A channel for sending pairing protocol events
-  pairing_protocol_send: mpsc::Sender<PairingProtocolEvent>,
+  /// A channel for sending network commands
+  pairing_protocol_send: mpsc::Sender<NetworkCommand>,
   /// A channel for reciving pairing protocol events
-  pairing_protocol_recv: Option<mpsc::Receiver<PairingProtocolEvent>>,
+  pairing_protocol_recv: Option<mpsc::Receiver<MulticonnectNetworkEvent>>,
 }
 
 impl PairingModule {
   pub fn new(
-    pairing_protocol_send: mpsc::Sender<PairingProtocolEvent>,
-    pairing_protocol_recv: mpsc::Receiver<PairingProtocolEvent>,
+    pairing_protocol_send: mpsc::Sender<NetworkCommand>,
+    pairing_protocol_recv: mpsc::Receiver<MulticonnectNetworkEvent>,
   ) -> Self {
     Self {
       pending_requests: Arc::new(Mutex::new(HashMap::new())),
@@ -87,7 +93,7 @@ impl MulticonnectModule for PairingModule {
           debug!("[first] Sending metadata to {}", peer_id);
           let _ = self
             .pairing_protocol_send
-            .send(PairingProtocolEvent::SendRequest(
+            .send(NetworkCommand::SendPacketProtocolRequest(
               peer_id,
               Packet::S1PeerMeta(S1PeerMeta::from_device(&ctx.this_device)),
             ))
@@ -121,7 +127,7 @@ impl MulticonnectModule for PairingModule {
             // Send the response
             let _ = self
               .pairing_protocol_send
-              .send(PairingProtocolEvent::SendResponse(
+              .send(NetworkCommand::SendPacketProtocolResponse(
                 ch,
                 Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted)),
               ))
@@ -143,7 +149,7 @@ impl MulticonnectModule for PairingModule {
             .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer));
           let _ = self
             .pairing_protocol_send
-            .send(PairingProtocolEvent::SendRequest(
+            .send(NetworkCommand::SendPacketProtocolRequest(
               device.peer,
               Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid)),
             ))
@@ -161,12 +167,22 @@ impl MulticonnectModule for PairingModule {
       let res_channels = self.res_channels.clone();
       let mut retain_interval = interval(Duration::from_secs(10));
 
+      {
+        let guard = ctx.lock().await;
+        let devices = guard.get_devices();
+        for (peer_id, (_, paired)) in devices.iter() {
+          if *paired && guard.get_this_device().peer > *peer_id {
+            let _ = pairing_protocol_send.send(NetworkCommand::OpenStream(*peer_id)).await;
+          }
+        }
+      }
+
       tokio::spawn(async move {
         loop {
           tokio::select! {
             event = ch.recv() => if let Some(event) = event {
               match event {
-                  PairingProtocolEvent::RecvRequest(peer_id, packet, response_channel) => {
+                  MulticonnectNetworkEvent::RecvRequest(peer_id, packet, response_channel) => {
                     match packet {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
@@ -177,7 +193,7 @@ impl MulticonnectModule for PairingModule {
                         guard.add_device(device);
 
                         debug!("[second] Sending meta to {}", peer_id);
-                        let _ = pairing_protocol_send.send(PairingProtocolEvent::SendResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
+                        let _ = pairing_protocol_send.send(NetworkCommand::SendPacketProtocolResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
 
                       },
                       Packet::P2PeerPairRequest(packet) => {
@@ -197,7 +213,7 @@ impl MulticonnectModule for PairingModule {
                       }
                     }
                   },
-                  PairingProtocolEvent::RecvResponse(peer_id, packet) => {
+                  MulticonnectNetworkEvent::RecvResponse(peer_id, packet) => {
                     match packet {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
@@ -226,6 +242,17 @@ impl MulticonnectModule for PairingModule {
                       _ => {
                         warn!("Unexpected packet recivied");
                       },
+                    }
+                  },
+                  MulticonnectNetworkEvent::ConnectionOpenRequest(peer_id) => {
+                    let guard = ctx.lock().await;
+                    if let Some((_, paired)) = guard.get_device(&peer_id) {
+                      debug!("Recived connection request from {} (saved: {})", peer_id, paired);
+                      if *paired {
+                        let _ = pairing_protocol_send.send(NetworkCommand::ApproveStream(peer_id)).await;
+                      } else {
+                        let _ = pairing_protocol_send.send(NetworkCommand::DenyStream(peer_id)).await;
+                      }
                     }
                   },
                   _ => {}

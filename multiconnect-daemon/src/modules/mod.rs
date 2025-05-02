@@ -14,12 +14,19 @@ use tokio::{
 };
 use uid::Id;
 
-use crate::{networking::NetworkManager, SharedDaemon};
+use crate::{
+  networking::{NetworkCommand, NetworkManager},
+  SharedDaemon,
+};
 
 #[derive(Debug, PartialEq)]
-pub enum Target {
-  Local(Packet),
-  Peer(PeerId, Packet),
+pub enum Action {
+  SendFrontend(Packet),
+  SendPeer(PeerId, Packet),
+  ApproveStream(PeerId),
+  DenyStream(PeerId),
+  OpenStream(PeerId),
+  CloseStream(PeerId),
 }
 
 /// A module that can be used for features
@@ -39,7 +46,7 @@ pub trait MulticonnectModule: Send + Sync {
 /// the frontend/peers and see what devices and currently paired
 pub struct MulticonnectCtx {
   /// TA channel to send packets to various locations
-  send_packet_tx: mpsc::Sender<Target>,
+  send_packet_tx: mpsc::Sender<Action>,
   /// A HashMap of PeerIds and corrosponding Devices and weather they are paired
   /// or not
   devices: HashMap<PeerId, (Device, bool)>,
@@ -49,18 +56,18 @@ pub struct MulticonnectCtx {
 
 impl MulticonnectCtx {
   /// Create a new instance of `MulticonnectCtx` <br />
-  pub fn new(send_packet_tx: mpsc::Sender<Target>, this_device: Device) -> Self {
+  pub fn new(send_packet_tx: mpsc::Sender<Action>, this_device: Device) -> Self {
     Self { send_packet_tx, this_device, devices: HashMap::new() }
   }
 
   /// Send a packet to the frontend
   pub async fn send_to_frontend(&self, packet: Packet) {
-    let _ = self.send_packet_tx.send(Target::Local(packet)).await;
+    let _ = self.send_packet_tx.send(Action::SendFrontend(packet)).await;
   }
 
   /// Send a packet to a peer
-  pub async fn send_to_peer(&self, target: PeerId, packet: Packet) {
-    let _ = self.send_packet_tx.send(Target::Peer(target, packet)).await;
+  pub async fn send_to_peer(&self, Action: PeerId, packet: Packet) {
+    let _ = self.send_packet_tx.send(Action::SendPeer(Action, packet)).await;
   }
 
   /// Get the HashMap of paired devices
@@ -101,7 +108,7 @@ pub struct ModuleManager {
   /// Network Manager
   network_manager: NetworkManager,
   // Sender from sending frontend packets
-  send_packet_rx: Option<mpsc::Receiver<Target>>,
+  send_packet_rx: Option<mpsc::Receiver<Action>>,
   /// Context that is shared between all modules
   ctx: Arc<Mutex<MulticonnectCtx>>,
 }
@@ -138,7 +145,7 @@ impl ModuleManager {
     let mut recv_frontend_packet_rx = self.daemon.recv_packet_channel();
     let mut recv_peer_packet_rx = self.network_manager.recv_packet_channel();
     let send_frontend_packet_tx = self.daemon.send_packet_channel();
-    let send_peer_packet_tx = self.network_manager.send_packet_channel();
+    let send_network_command = self.network_manager.send_command_channel();
 
     for module in self.modules.iter_mut() {
       module.init(ctx.clone()).await;
@@ -167,11 +174,15 @@ impl ModuleManager {
             error!("Error reciving peer packet channel");
           },
 
-          target = send_packet_rx.recv() => if let Some(target) = target {
+          action = send_packet_rx.recv() => if let Some(action) = action {
 
-            match target {
-              Target::Local(packet) => { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
-              Target::Peer(peer_id, packet) => { let _ = send_peer_packet_tx.send((peer_id, packet)).await; },
+            match action {
+                Action::SendFrontend(packet)=> { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
+                Action::SendPeer(peer_id,packet)=>{ let _ = send_network_command.send(NetworkCommand::SendPacket(peer_id,packet)).await; },
+                Action::ApproveStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::ApproveStream(peer_id)).await; },
+                Action::DenyStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::DenyStream(peer_id)).await; },
+                Action::OpenStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::OpenStream(peer_id)).await; },
+                Action::CloseStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::CloseStream(peer_id)); },
             };
           },
           _ = periodic_interval.tick() => {
