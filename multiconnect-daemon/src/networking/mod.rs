@@ -185,9 +185,10 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionOpenRequest(peer))) => {
               // TODO: Check if paired
-              swarm.behaviour_mut().packet_protocol.approve_inbound_stream(peer.clone());
+              // swarm.behaviour_mut().packet_protocol.approve_inbound_stream(peer.clone());
 
-              let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer, Packet::P0Ping(P0Ping::new())).await;
+              // let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer, Packet::P0Ping(P0Ping::new())).await;
+              // if {}
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionClosed(peer))) => {
               info!("Channel to {} closed", peer);
