@@ -52,7 +52,8 @@ impl MulticonnectModule for PairingModule {
   #[doc = " Runs every 20ms, used for background tasks/other stuff service is doing"]
   async fn periodic(&mut self, _ctx: &mut MulticonnectCtx) {}
 
-  /// No real peer to pper happens here, this is just for discovery (easy way to pass msgs is to send packets from self on channel)
+  /// No real peer to pper happens here, this is just for discovery (easy way to
+  /// pass msgs is to send packets from self on channel)
   #[doc = " Runs when the swarm recivies a packet from another peer"]
   async fn on_peer_packet(&mut self, packet: Packet, _source: PeerId, ctx: &mut MulticonnectCtx) {
     match packet {
@@ -145,7 +146,7 @@ impl MulticonnectModule for PairingModule {
                     match packet {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
-                        debug!("Recvived device meta {:?}", device);
+                        debug!("Revived device meta {:?}", device);
 
                         let mut guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
@@ -156,7 +157,7 @@ impl MulticonnectModule for PairingModule {
 
                       },
                       Packet::P2PeerPairRequest(packet) => {
-                        info!("Recivied pairing request from {}, req_id = {}", peer_id, packet.req_uuid);
+                        info!("Received pairing request from {}, req_id = {}", peer_id, packet.req_uuid);
 
                         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
                         let device = bincode::deserialize::<Device>(&packet.device).unwrap();
@@ -168,7 +169,7 @@ impl MulticonnectModule for PairingModule {
                         guard.send_to_frontend(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await;
                       },
                       _ => {
-                        warn!("Unexpected packet recived");
+                        warn!("Unexpected packet received");
                       }
                     }
                   },
@@ -176,7 +177,7 @@ impl MulticonnectModule for PairingModule {
                     match packet {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
-                        debug!("Recivied device meta: {:?}", device);
+                        debug!("Received device meta: {:?}", device);
                         let mut guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                         guard.add_device(device);

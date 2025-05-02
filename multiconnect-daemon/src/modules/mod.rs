@@ -1,4 +1,3 @@
-pub mod discovery;
 pub mod pairing;
 
 use async_trait::async_trait;
@@ -36,12 +35,13 @@ pub trait MulticonnectModule: Send + Sync {
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>);
 }
 
-/// Context that modules get and allows them to do things like send packets to the
-/// frontend/peers and see what devices and currently paired
+/// Context that modules get and allows them to do things like send packets to
+/// the frontend/peers and see what devices and currently paired
 pub struct MulticonnectCtx {
   /// TA channel to send packets to various locations
   send_packet_tx: mpsc::Sender<Target>,
-  /// A HashMap of PeerIds and corrosponding Devices and weather they are paired or not
+  /// A HashMap of PeerIds and corrosponding Devices and weather they are paired
+  /// or not
   devices: HashMap<PeerId, (Device, bool)>,
   /// The current device
   this_device: Device,

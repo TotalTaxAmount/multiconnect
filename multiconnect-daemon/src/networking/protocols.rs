@@ -220,7 +220,7 @@ impl MulticonnectDataBehaviour {
       let _ = s.lock().await.flush().await;
       Ok(())
     } else {
-      warn!("Appempted to send a packet to a peer that is not connected");
+      warn!("Attempted to send a packet to a peer that is not connected");
       Err(ErrorKind::HostUnreachable.into())
     }
   }
@@ -275,7 +275,7 @@ impl MulticonnectDataBehaviour {
               }
             };
 
-            debug!("Recivied {:?} from peer", packet);
+            debug!("Received {:?} from peer", packet);
             let _ = tx.send((peer_id.clone(), packet)).await;
           }
           Err(e) => {

@@ -91,11 +91,10 @@ impl ConfigManager {
     debug!("Saving config file");
 
     match OpenOptions::new().write(true).truncate(true).create(true).open(&config_path) {
-      Ok(file) => {
+      Ok(file) =>
         if let Err(e) = serde_yml::to_writer(file, &self.config) {
           error!("Failed to write config: {}", e);
-        }
-      }
+        },
       Err(e) => {
         error!("Failed to open config for saving: {}", e);
       }

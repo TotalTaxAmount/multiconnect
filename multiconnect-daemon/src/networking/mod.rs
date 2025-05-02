@@ -52,7 +52,7 @@ impl MulticonnectBehavior {
     let packet_protocol = MulticonnectDataBehaviour::new();
 
     let mdns_config: mdns::Config = mdns::Config {
-      ttl: Duration::from_secs(5),
+      ttl: Duration::from_secs(2),
       query_interval: std::time::Duration::from_secs(1),
       ..Default::default()
     };
@@ -105,11 +105,6 @@ impl NetworkManager {
   pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
-    // let (send_packet_tx, mut send_packet_rx) = mpsc::channel::<(PeerId, Packet)>(100);
-    // let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
-
-    // let (pairing_protocol_recv_tx, pairing_protocol_recv_rx) = mpsc::channel::<PairingProtocolEvent>(10);
-    // let (pairing_protocol_send_tx, mut pairing_protocol_send_rx) = mpsc::channel::<PairingProtocolEvent>(10);
     let mut send_packet_rx = self.send_packet_rx.take().unwrap();
     let mut pairing_protocol_send_rx = self.pairing_protocol_send_rx.take().unwrap();
     let recv_peer_packet_tx = self.recv_peer_packet_tx.clone();
@@ -162,9 +157,10 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mdns(mdns::Event::Expired(expired))) => {
               for (peer_id, multiaddr) in expired {
-                info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                discovered_peers.remove(&peer_id);
-                let _ = recv_peer_packet_tx.send((this_device.peer, Packet::L1PeerExpired(L1PeerExpired::new(&peer_id)))); // Notify modules that peer expired
+                if discovered_peers.remove(&peer_id) {
+                  info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
+                  let _ = recv_peer_packet_tx.send((this_device.peer, Packet::L1PeerExpired(L1PeerExpired::new(&peer_id)))); // Notify modules that peer expired
+                }
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PairingProtocol(request_response::Event::Message { peer, message, .. })) => {

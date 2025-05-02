@@ -116,13 +116,13 @@ pub enum Packet {
   /// Peer discovred
   L6PeerDiscovered(L6PeerDiscovered),
   /// Get metadata about a peer
-  S1PeerMeta(S1PeerMeta), // TODO
-                          // TransferStart(TransferStart),
-                          // TransferChunk(TransferChunk),
-                          // TransferEnd(TransferEnd),
-                          // TransferStatus(TransferStatus),
-                          // SmsMessage(SmsMessage),
-                          // Notify(Notification),
+  S1PeerMeta(S1PeerMeta), /* TODO
+                           * TransferStart(TransferStart),
+                           * TransferChunk(TransferChunk),
+                           * TransferEnd(TransferEnd),
+                           * TransferStatus(TransferStatus),
+                           * SmsMessage(SmsMessage),
+                           * Notify(Notification), */
 }
 
 impl Packet {
