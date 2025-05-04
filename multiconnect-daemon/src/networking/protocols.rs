@@ -12,7 +12,6 @@ use std::{
   task::Poll,
 };
 
-use argh::Flag;
 use async_trait::async_trait;
 use libp2p::{
   core::UpgradeInfo,
@@ -21,9 +20,9 @@ use libp2p::{
   swarm::{ConnectionHandler, ConnectionHandlerEvent, NetworkBehaviour, SubstreamProtocol, ToSwarm},
   InboundUpgrade, OutboundUpgrade, PeerId,
 };
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use multiconnect_protocol::Packet;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, Mutex};
 
 pub trait AsyncReadWrite: AsyncRead + AsyncWrite + Debug {}
 impl<T: AsyncRead + AsyncWrite + ?Sized + Debug> AsyncReadWrite for T {}

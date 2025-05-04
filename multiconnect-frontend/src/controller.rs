@@ -1,5 +1,5 @@
 use log::warn;
-use multiconnect_protocol::{Device, Packet, Peer};
+use multiconnect_protocol::{Device, Packet};
 use tauri::{AppHandle, Emitter};
 use tokio_stream::StreamExt;
 

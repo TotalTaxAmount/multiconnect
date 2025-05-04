@@ -1,9 +1,8 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use bincode::de;
 use libp2p::{
-  request_response::{Message, ResponseChannel},
+  request_response::ResponseChannel,
   PeerId,
 };
 use log::{debug, info, warn};
@@ -15,7 +14,7 @@ use multiconnect_protocol::{
 };
 use tokio::{
   sync::{mpsc, Mutex, RwLock},
-  time::{interval, Instant, Interval},
+  time::{interval, Instant},
 };
 use uuid::Uuid;
 

@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use log::{debug, error, info, trace};
-use multiconnect_config::CONFIG;
 use multiconnect_protocol::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpSocket,
   sync::{
-    broadcast::{self, error::RecvError},
-    mpsc, Mutex,
+    broadcast::{self},
+    mpsc,
   },
 };
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};

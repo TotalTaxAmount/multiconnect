@@ -1,6 +1,4 @@
-use std::path::PathBuf;
 
-use bincode::de;
 use libp2p::PeerId;
 use uuid::Uuid;
 
@@ -8,7 +6,7 @@ use crate::{
   local::peer::*,
   p2p::{peer::*, *},
   shared::peer::*,
-  Device, Packet, Peer,
+  Device, Packet,
 };
 
 // TODO: Maybe use traits here?

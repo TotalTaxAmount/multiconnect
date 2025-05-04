@@ -7,8 +7,8 @@ use generated::multiconnect::{
 };
 
 use libp2p::{Multiaddr, PeerId};
-use log::{debug, error, trace};
-use prost::{bytes::BufMut, Message};
+use log::{error, trace};
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uid::IdU32;
@@ -241,7 +241,7 @@ fn is_laptop() -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use libp2p::PeerId;
+  
 
   #[test]
   fn test_packet_serialization() {

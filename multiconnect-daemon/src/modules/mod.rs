@@ -1,18 +1,14 @@
 pub mod pairing;
 
 use async_trait::async_trait;
-use libp2p::{
-  request_response::{Event, Message, ResponseChannel},
-  PeerId,
-};
+use libp2p::PeerId;
 use log::{debug, error};
-use multiconnect_protocol::{Device, Packet, Peer};
+use multiconnect_protocol::{Device, Packet};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
-  sync::{broadcast, mpsc, oneshot, Mutex},
+  sync::{mpsc, Mutex},
   time::{self, Duration},
 };
-use uid::Id;
 
 use crate::{
   networking::{NetworkCommand, NetworkManager},

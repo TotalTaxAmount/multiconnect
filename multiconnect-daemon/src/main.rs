@@ -1,5 +1,5 @@
 use fern::colors::{Color, ColoredLevelConfig};
-use multiconnect_config::{ConfigManager, CONFIG};
+use multiconnect_config::ConfigManager;
 use multiconnect_daemon::{
   modules::{pairing::PairingModule, ModuleManager},
   networking::NetworkManager,

@@ -13,10 +13,8 @@ use libp2p::{
 use log::{debug, info, trace, warn};
 use multiconnect_config::CONFIG;
 use multiconnect_protocol::{
-  local::peer::{L0PeerFound, L1PeerExpired, L6PeerDiscovered},
-  p2p::P0Ping,
-  shared::peer::*,
-  Device, Packet, Peer,
+  local::peer::{L1PeerExpired, L6PeerDiscovered},
+  Device, Packet,
 };
 use protocols::{BehaviourEvent, MulticonnectDataBehaviour, PairingCodec};
 use tokio::{
@@ -288,5 +286,5 @@ impl NetworkManager {
 }
 #[cfg(test)]
 mod tests {
-  use super::*;
+  
 }
