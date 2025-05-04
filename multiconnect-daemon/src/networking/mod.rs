@@ -1,5 +1,4 @@
 mod protocols;
-mod store;
 
 use std::{collections::HashSet, error::Error, io, time::Duration};
 
@@ -93,6 +92,7 @@ impl NetworkManager {
     let (send_command_tx, send_command_rx) = mpsc::channel::<NetworkCommand>(100);
     let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
     let (mc_network_event_recv_tx, mc_network_event_recv_rx) = mpsc::channel::<MulticonnectNetworkEvent>(10);
+
     let keys = Self::get_keys().await.unwrap();
 
     Self {
@@ -104,7 +104,6 @@ impl NetworkManager {
 
       mc_network_event_recv_tx,
       mc_network_event_recv_rx: Some(mc_network_event_recv_rx),
-
       keys,
     }
   }

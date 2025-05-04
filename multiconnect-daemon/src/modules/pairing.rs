@@ -14,12 +14,15 @@ use multiconnect_protocol::{
   Device, Packet,
 };
 use tokio::{
-  sync::{mpsc, Mutex},
+  sync::{mpsc, Mutex, RwLock},
   time::{interval, Instant, Interval},
 };
 use uuid::Uuid;
 
-use crate::networking::{MulticonnectNetworkEvent, NetworkCommand};
+use crate::{
+  networking::{MulticonnectNetworkEvent, NetworkCommand},
+  store::Store,
+};
 
 use super::{MulticonnectCtx, MulticonnectModule};
 
@@ -61,10 +64,12 @@ pub struct PairingModule {
   pairing_protocol_send: mpsc::Sender<NetworkCommand>,
   /// A channel for reciving pairing protocol events
   pairing_protocol_recv: Option<mpsc::Receiver<MulticonnectNetworkEvent>>,
+  /// Store
+  store: Arc<RwLock<Store>>,
 }
 
 impl PairingModule {
-  pub fn new(
+  pub async fn new(
     pairing_protocol_send: mpsc::Sender<NetworkCommand>,
     pairing_protocol_recv: mpsc::Receiver<MulticonnectNetworkEvent>,
   ) -> Self {
@@ -73,6 +78,7 @@ impl PairingModule {
       pairing_protocol_recv: Some(pairing_protocol_recv),
       pairing_protocol_send,
       res_channels: Arc::new(Mutex::new(HashMap::new())),
+      store: Arc::new(RwLock::new(Store::new().await)),
     }
   }
 }
@@ -166,6 +172,7 @@ impl MulticonnectModule for PairingModule {
       let pending_requests = self.pending_requests.clone();
       let res_channels = self.res_channels.clone();
       let mut retain_interval = interval(Duration::from_secs(10));
+      let store = self.store.clone();
 
       {
         let guard = ctx.lock().await;
@@ -187,6 +194,8 @@ impl MulticonnectModule for PairingModule {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
                         debug!("Revived device meta {:?}", device);
+
+                        // store.write().await.save_device(peer_id, false).await;
 
                         let mut guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
@@ -233,6 +242,7 @@ impl MulticonnectModule for PairingModule {
                             if let Some((_, paired)) = guard.get_device_mut(&device.peer) {
                               info!("Sucessfully paired with: {}", device.peer);
                               *paired = true;
+                              store.write().await.save_device(peer_id, device, true).await;
                             }
                           }
 

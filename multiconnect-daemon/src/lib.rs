@@ -1,5 +1,6 @@
 pub mod modules;
 pub mod networking;
+pub mod store;
 
 use std::{sync::Arc, time::Duration};
 
