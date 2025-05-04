@@ -82,12 +82,14 @@ async fn refresh_mdns(controller: State<'_, Controller>) -> Result<(), ()> {
 
 #[tauri::command]
 async fn get_theme() -> Result<String, ()> {
-  Ok(CONFIG.read().await.get_config().frontend.theme.clone())
+  let cfg = CONFIG.get().unwrap();
+  Ok(cfg.read().await.get_config().frontend.theme.clone())
 }
 
 #[tauri::command]
 async fn set_theme(theme: String) -> Result<(), ()> {
-  let mut cfg = CONFIG.write().await;
+  let cfg = CONFIG.get().unwrap();
+  let mut cfg = cfg.write().await;
   cfg.get_mut_config().frontend.theme = theme;
   cfg.save_config();
   Ok(())

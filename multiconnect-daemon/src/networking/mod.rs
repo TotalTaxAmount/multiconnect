@@ -243,7 +243,8 @@ impl NetworkManager {
    * Get saved keys or generate new ones if they don't exist
    */
   async fn get_keys() -> std::io::Result<Keypair> {
-    let mut path = CONFIG.read().await.get_config_dir().clone();
+    let cfg = CONFIG.get().unwrap();
+    let mut path = cfg.read().await.get_config_dir().clone();
     path.push("keys");
 
     if let Ok(mut file) = File::open(&path).await {

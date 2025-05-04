@@ -9,15 +9,15 @@ use std::{
 };
 
 use configs::FrontendConfig;
-use lazy_static::lazy_static;
+use fs2::FileExt;
 use log::{debug, error, info};
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-lazy_static! {
-  pub static ref CONFIG: RwLock<ConfigManager> = RwLock::new(ConfigManager::new());
-}
+pub static CONFIG: OnceCell<RwLock<ConfigManager>> = OnceCell::new();
 
+#[derive(Debug)]
 pub struct ConfigManager {
   config_path: PathBuf,
   config: Config,
@@ -29,7 +29,7 @@ pub struct Config {
 }
 
 impl ConfigManager {
-  fn new() -> Self {
+  async fn new() -> std::io::Result<Self> {
     let path: PathBuf;
 
     if let Ok(other) = std::env::var("MC_CONFIG_DIR") {
@@ -38,8 +38,7 @@ impl ConfigManager {
       path = dirs::config_dir().unwrap().join("multiconnect");
     }
 
-    let mut config_file_path = path.clone();
-    config_file_path.push("config.yml");
+    let config_file_path = path.clone().join("config.yml");
 
     if !path.exists() {
       if let Err(e) = fs::create_dir_all(&path) {
@@ -50,22 +49,27 @@ impl ConfigManager {
 
     if !config_file_path.exists() {
       info!("Creating new config file: {}", config_file_path.to_str().unwrap());
-      Self::create_default_config(&config_file_path);
+      Self::create_default_config(&config_file_path)?;
     }
 
-    if let Ok(config) = Self::load_config(&config_file_path) {
-      Self { config_path: path, config }
+    if let Ok(config) = Self::load_config(config_file_path).await {
+      Ok(Self { config_path: path, config })
     } else {
       error!("Failed to load config");
       exit(-1)
     }
   }
 
+  pub async fn init() {
+    let cfg = ConfigManager::new().await.expect("Failed to initalize config manager");
+    CONFIG.set(RwLock::new(cfg)).unwrap();
+  }
+
   pub fn get_config_dir(&self) -> &PathBuf {
     &self.config_path
   }
 
-  fn create_default_config(path: &PathBuf) {
+  fn create_default_config(path: &PathBuf) -> std::io::Result<()> {
     let config = Config::default();
 
     let file = OpenOptions::new()
@@ -74,31 +78,57 @@ impl ConfigManager {
       .create(true)
       .open(path)
       .expect(&format!("Failed to open config file: {:?}", path));
+    file.lock_exclusive()?;
+    serde_yml::to_writer(&file, &config).unwrap();
+    fs2::FileExt::unlock(&file)?;
 
-    serde_yml::to_writer(file, &config).unwrap();
+    Ok(())
   }
 
-  fn load_config(path: &PathBuf) -> Result<Config, Box<dyn Error>> {
-    let file = File::open(path)?;
-    let config: Config = serde_yml::from_reader(file)?;
-    Ok(config)
+  async fn load_config(path: PathBuf) -> Result<Config, Box<dyn Error + Send>> {
+    tokio::task::spawn_blocking(move || {
+      let file = File::open(path).unwrap();
+
+      file.lock_exclusive().unwrap();
+      let config: Config = serde_yml::from_reader(&file).unwrap();
+      fs2::FileExt::unlock(&file).unwrap();
+      Ok(config)
+    })
+    .await
+    .unwrap()
   }
 
-  pub fn save_config(&self) {
-    let mut config_path = self.config_path.clone();
-    config_path.push("config.yml");
+  pub async fn save_config(&self) -> std::io::Result<()> {
+    let config_path = self.config_path.clone().join("config.yml");
+    let config = self.config.clone();
 
     debug!("Saving config file");
 
-    match OpenOptions::new().write(true).truncate(true).create(true).open(&config_path) {
-      Ok(file) =>
-        if let Err(e) = serde_yml::to_writer(file, &self.config) {
-          error!("Failed to write config: {}", e);
-        },
-      Err(e) => {
-        error!("Failed to open config for saving: {}", e);
+    tokio::task::spawn_blocking(move || {
+      match OpenOptions::new().write(true).truncate(true).create(true).open(&config_path) {
+        Ok(file) => {
+          if let Err(e) = file.lock_exclusive() {
+            error!("Failed to lock config file: {}", e);
+            return;
+          }
+
+          if let Err(e) = serde_yml::to_writer(&file, &config) {
+            error!("Failed to write config: {}", e);
+          }
+
+          if let Err(e) = fs2::FileExt::unlock(&file) {
+            error!("Failed to unlock config file: {}", e);
+          }
+        }
+        Err(e) => {
+          error!("Failed to open config for saving: {}", e);
+        }
       }
-    }
+    })
+    .await
+    .unwrap();
+
+    Ok(())
   }
 
   pub fn get_config(&self) -> &Config {

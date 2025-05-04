@@ -21,7 +21,8 @@ impl Store {
   }
 
   async fn load() -> HashMap<PeerId, (Device, bool)> {
-    let path = CONFIG.read().await.get_config_dir().join(FILENAME);
+    let cfg = CONFIG.get().unwrap();
+    let path = cfg.read().await.get_config_dir().join(FILENAME);
     if !path.exists() {
       return HashMap::new();
     }
@@ -42,7 +43,8 @@ impl Store {
   }
 
   async fn save(&self) {
-    let file = CONFIG.read().await.get_config_dir().join(FILENAME);
+    let cfg = CONFIG.get().unwrap();
+    let file = cfg.read().await.get_config_dir().join(FILENAME);
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(file).unwrap();
 
     let json = serde_json::to_string(&self.saved_devices).unwrap();

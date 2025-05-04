@@ -1,4 +1,5 @@
 use fern::colors::{Color, ColoredLevelConfig};
+use multiconnect_config::{ConfigManager, CONFIG};
 use multiconnect_daemon::{
   modules::{pairing::PairingModule, ModuleManager},
   networking::NetworkManager,
@@ -29,6 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .chain(std::io::stdout())
     .apply()?;
 
+  ConfigManager::init().await;
   let daemon = Daemon::new(args.port).await?;
 
   let mut network_manager = NetworkManager::new().await;
