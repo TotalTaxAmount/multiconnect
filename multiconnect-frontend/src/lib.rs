@@ -12,6 +12,7 @@ use tauri::{async_runtime, Manager, State};
 use tokio::task;
 use uuid::Uuid;
 
+#[allow(dead_code)]
 const PORT: u16 = 10999;
 
 #[derive(FromArgs)]
@@ -91,6 +92,6 @@ async fn set_theme(theme: String) -> Result<(), ()> {
   let cfg = CONFIG.get().unwrap();
   let mut cfg = cfg.write().await;
   cfg.get_mut_config().frontend.theme = theme;
-  cfg.save_config();
+  cfg.save_config().await.unwrap();
   Ok(())
 }

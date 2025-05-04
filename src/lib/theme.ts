@@ -25,11 +25,16 @@ if (typeof window !== "undefined") {
         ? "dark"
         : "light";
 
+    let lastSetTheme: Theme = resolved;
     theme.set(resolved);
 
-     theme.subscribe(async (v) => {
+    theme.subscribe(async (v) => {
       document.documentElement.classList.toggle("dark", v === "dark");
-      await setTheme(v);
+
+      if (v !== lastSetTheme) {
+        lastSetTheme = v;
+        await setTheme(v);
+      }
     });
   })();
 }

@@ -4,6 +4,7 @@
 use std::{error::Error, str::FromStr, time::SystemTime};
 
 use fern::colors::{Color, ColoredLevelConfig};
+use multiconnect_config::ConfigManager;
 use multiconnect_lib::FrontendArgs;
 
 #[tokio::main]
@@ -28,6 +29,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .level(log::LevelFilter::from_str(&args.log_level)?)
     .chain(std::io::stdout())
     .apply()?;
+  ConfigManager::init().await;
 
   Ok(multiconnect_lib::run(args.port))
 }
