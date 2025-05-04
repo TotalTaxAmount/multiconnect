@@ -28,8 +28,6 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Debug)]
 pub enum MulticonnectNetworkEvent {
-  // SendRequest(PeerId, Packet),
-  // SendResponse(ResponseChannel<Packet>, Packet),
   RecvRequest(PeerId, Packet, ResponseChannel<Packet>),
   RecvResponse(PeerId, Packet),
   ConnectionOpenRequest(PeerId),

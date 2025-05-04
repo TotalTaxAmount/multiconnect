@@ -195,7 +195,7 @@ impl MulticonnectModule for PairingModule {
                         let device = Device::from_meta(packet, peer_id);
                         debug!("Revived device meta {:?}", device);
 
-                        // store.write().await.save_device(peer_id, false).await;
+                        store.write().await.save_device(peer_id, device.clone(), false).await;
 
                         let mut guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;

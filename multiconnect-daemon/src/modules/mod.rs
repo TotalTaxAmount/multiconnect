@@ -66,8 +66,8 @@ impl MulticonnectCtx {
   }
 
   /// Send a packet to a peer
-  pub async fn send_to_peer(&self, Action: PeerId, packet: Packet) {
-    let _ = self.send_packet_tx.send(Action::SendPeer(Action, packet)).await;
+  pub async fn send_to_peer(&self, target: PeerId, packet: Packet) {
+    let _ = self.send_packet_tx.send(Action::SendPeer(target, packet)).await;
   }
 
   /// Get the HashMap of paired devices

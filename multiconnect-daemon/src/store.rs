@@ -7,7 +7,9 @@ use std::{
 use libp2p::PeerId;
 use log::error;
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{Device, Peer};
+use multiconnect_protocol::Device;
+
+const FILENAME: &str = "saved_devices.json";
 
 pub struct Store {
   saved_devices: HashMap<PeerId, (Device, bool)>,
@@ -19,7 +21,7 @@ impl Store {
   }
 
   async fn load() -> HashMap<PeerId, (Device, bool)> {
-    let path = CONFIG.read().await.get_config_dir().join("saved_saved_devices.json");
+    let path = CONFIG.read().await.get_config_dir().join(FILENAME);
     if !path.exists() {
       return HashMap::new();
     }
@@ -40,7 +42,7 @@ impl Store {
   }
 
   async fn save(&self) {
-    let file = CONFIG.read().await.get_config_dir().join("saved");
+    let file = CONFIG.read().await.get_config_dir().join(FILENAME);
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(file).unwrap();
 
     let json = serde_json::to_string(&self.saved_devices).unwrap();
