@@ -10,7 +10,7 @@ use multiconnect_protocol::{
   Device, Packet,
 };
 use tokio::{
-  sync::{mpsc, Mutex, RwLock},
+  sync::{mpsc, Mutex},
   time::{interval, Instant},
 };
 use uuid::Uuid;
@@ -72,7 +72,6 @@ impl PairingModule {
       pairing_protocol_recv: Some(pairing_protocol_recv),
       pairing_protocol_send,
       res_channels: Arc::new(Mutex::new(HashMap::new())),
-      // store: Arc::new(RwLock::new(Store::new().await)),
     }
   }
 }
@@ -109,8 +108,8 @@ impl MulticonnectModule for PairingModule {
       }
       NetworkEvent::ConnectionOpenRequest(peer_id) => {
         if let Some((_, paired)) = ctx.get_device(&peer_id) {
-          debug!("Recived connection request from {} (saved: {})", peer_id, paired);
-          if *paired {
+          debug!("Recived connection request from {} (saved: {:?})", peer_id, paired);
+          if Some(true) == *paired {
             ctx.approve_inbound_stream(peer_id).await;
           } else {
             ctx.deny_inbound_stream(peer_id).await;
@@ -177,13 +176,12 @@ impl MulticonnectModule for PairingModule {
       let pending_requests = self.pending_requests.clone();
       let res_channels = self.res_channels.clone();
       let mut retain_interval = interval(Duration::from_secs(10));
-      let store = self.store.clone();
 
       {
         let guard = ctx.lock().await;
         let devices = guard.get_devices();
         for (peer_id, (_, paired)) in devices.iter() {
-          if *paired && guard.get_this_device().peer > *peer_id {
+          if Some(true) == *paired && guard.get_this_device().peer > *peer_id {
             let _ = pairing_protocol_send.send(NetworkCommand::OpenStream(*peer_id)).await;
           }
         }
@@ -200,11 +198,10 @@ impl MulticonnectModule for PairingModule {
                         let device = Device::from_meta(packet, peer_id);
                         debug!("Revived device meta {:?}", device);
 
-                        store.write().await.save_device(peer_id, device.clone(), false).await;
-
                         let mut guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                         guard.add_device(device);
+
 
                         debug!("[second] Sending meta to {}", peer_id);
                         let _ = pairing_protocol_send.send(NetworkCommand::SendPairingProtocolResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
@@ -246,8 +243,8 @@ impl MulticonnectModule for PairingModule {
                             let device = bincode::deserialize::<Device>(&req.device).unwrap();
                             if let Some((_, paired)) = guard.get_device_mut(&device.peer) {
                               info!("Sucessfully paired with: {}", device.peer);
-                              *paired = true;
-                              store.write().await.save_device(peer_id, device, true).await;
+                              *paired = Some(true);
+                              guard.save_store().await;
                             }
                           }
 
@@ -259,18 +256,6 @@ impl MulticonnectModule for PairingModule {
                       },
                     }
                   },
-                  // PairingProtocolEvent::ConnectionOpenRequest(peer_id) => {
-                  //   let guard = ctx.lock().await;
-                  //   if let Some((_, paired)) = guard.get_device(&peer_id) {
-                  //     debug!("Recived connection request from {} (saved: {})", peer_id, paired);
-                  //     if *paired {
-                  //       let _ = pairing_protocol_send.send(NetworkCommand::ApproveStream(peer_id)).await;
-                  //     } else {
-                  //       let _ = pairing_protocol_send.send(NetworkCommand::DenyStream(peer_id)).await;
-                  //     }
-                  //   }
-                  // },
-                  _ => {}
               }
             },
 

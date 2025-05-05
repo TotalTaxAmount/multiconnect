@@ -84,11 +84,7 @@ impl Daemon {
       match self.listener.accept().await {
         Ok((stream, addr)) => {
           info!("New connection from {}", addr);
-          let incoming_tx = self.incoming_tx.clone();
-          let outgoing_rx = self.outgoing_rx.clone();
-
-          incoming_tx.send(FrontendEvent::Connected);
-          tokio::spawn(async move { Self::handle(stream, incoming_tx, outgoing_rx).await });
+          self.handle(stream).await;
         }
         Err(e) => {
           error!("Failed to accept connection: {}", e);
@@ -103,21 +99,12 @@ impl Daemon {
   /// be used with one client so it is fine for now
   /// ### Arguments:
   /// * `stream` - The [`TcpStream`] for the client connect
-  /// * `incoming_tx` - A [`broadcast::Sender<Packet>`]. Packets received from
-  ///   clients are sent on this channel
-  /// * `outgoing_rx` - A [`Arc<Mutex<mpsc::Receiver<Packet>>>`]. Packets that
-  ///   need to be send to the client are received
-  /// on this channel
-  // TODO: Possibly use self in the future
-  async fn handle(
-    stream: TcpStream,
-    incoming_tx: broadcast::Sender<FrontendEvent>,
-    outgoing_rx: Arc<Mutex<mpsc::Receiver<Packet>>>,
-  ) {
+  async fn handle(&self, stream: TcpStream) {
+    let _ = self.incoming_tx.send(FrontendEvent::Connected);
     let (mut read_half, mut write_half) = stream.into_split();
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
-    let mut outgoing_lock = outgoing_rx.lock().await;
+    let mut outgoing_lock = self.outgoing_rx.lock().await;
 
     loop {
       tokio::select! {
@@ -144,7 +131,7 @@ impl Daemon {
 
                 debug!("Received {:?} packet", packet);
 
-                if let Err(e) = incoming_tx.send(FrontendEvent::RecvPacket( packet)) {
+                if let Err(e) = self.incoming_tx.send(FrontendEvent::RecvPacket(packet)) {
                   error!("Failed to add send packet (local): {}", e);
                 };
               }
@@ -184,7 +171,7 @@ impl Daemon {
       }
     }
 
-    incoming_tx.send(FrontendEvent::Disconnected);
+    let _ = self.incoming_tx.send(FrontendEvent::Disconnected);
   }
 
   /// Get the stream for sending packets

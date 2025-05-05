@@ -63,7 +63,7 @@ impl Store {
     file.write_all(&json.as_bytes()).unwrap();
   }
 
-  pub async fn save_device(&mut self, peer_id: PeerId, device: Device, paired: Option<bool>) {
+  pub fn save_device(&mut self, peer_id: PeerId, device: Device, paired: Option<bool>) {
     self.devices.insert(peer_id, (device, paired));
   }
 
@@ -91,7 +91,7 @@ impl Store {
     self.devices.contains_key(peer_id)
   }
 
-  pub async fn set_paired(&mut self, peer_id: PeerId, paired: bool) {
+  pub fn set_paired(&mut self, peer_id: PeerId, paired: bool) {
     if let Some((_, p)) = self.devices.get_mut(&peer_id) {
       *p = Some(paired);
     }

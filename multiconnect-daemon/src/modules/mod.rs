@@ -87,18 +87,22 @@ impl MulticonnectCtx {
     let _ = self.action_tx.send(Action::CloseStream(peer_id)).await;
   }
 
+  pub async fn save_store(&self) {
+    self.store.save().await;
+  }
+
   /// Get the HashMap of paired devices
-  pub fn get_devices(&self) -> &HashMap<PeerId, (Device, bool)> {
+  pub fn get_devices(&self) -> &HashMap<PeerId, (Device, Option<bool>)> {
     &self.store.get_saved_devices()
   }
 
   /// Get a paired device
-  pub fn get_device(&self, id: &PeerId) -> Option<&(Device, bool)> {
+  pub fn get_device(&self, id: &PeerId) -> Option<&(Device, Option<bool>)> {
     self.store.get_device(id)
     // self.devices.get(id)
   }
 
-  pub fn get_device_mut(&mut self, id: &PeerId) -> Option<&mut (Device, bool)> {
+  pub fn get_device_mut(&mut self, id: &PeerId) -> Option<&mut (Device, Option<bool>)> {
     self.store.get_device_mut(id)
   }
   /// Add a device to the list of paired devices
@@ -107,7 +111,7 @@ impl MulticonnectCtx {
   }
 
   /// Remove a paired  device
-  pub fn remove_device(&mut self, id: &PeerId) -> Option<(Device, bool)> {
+  pub fn remove_device(&mut self, id: &PeerId) -> Option<(Device, Option<bool>)> {
     self.store.remove_device(id)
   }
 
