@@ -21,30 +21,47 @@ use tokio::{
 };
 use tracing_subscriber::EnvFilter;
 
-// Has to be seperate because `ResponseChannel` is not `Clone`
+/// Has to be seperate because `ResponseChannel` is not `Clone`
 #[derive(Debug)]
 pub enum PairingProtocolEvent {
+  /// Receive pairing request from a peer
   RecvRequest(PeerId, Packet, ResponseChannel<Packet>),
+  /// Receivie a pairing resposne from a peer
   RecvResponse(PeerId, Packet),
 }
 
+/// Diffrent swarm events that get passed to modules
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
+  /// A peer is discoverd on the network
   PeerDiscoverd(PeerId),
+  /// A peer expires on the network
   PeerExpired(PeerId),
+  /// A packet is recived from a peer
   PacketRecived(PeerId, Packet),
+  /// A peer requests to open a stream
   ConnectionOpenRequest(PeerId),
+  /// A connectio to a peer is closed
   ConnectionClosed(PeerId),
 }
 
+/// Commands that can be sent to the swarm
+#[derive(Debug)]
 pub enum NetworkCommand {
+  /// Send a packet to a peer
   SendPacket(PeerId, Packet),
+  /// Approve a inbound stream request
   ApproveStream(PeerId),
+  /// Deny a inbound stream request
   DenyStream(PeerId),
+  /// Request to open a stream to a peer
   OpenStream(PeerId),
+  /// Close a stream to a peer
   CloseStream(PeerId),
-  SendPacketProtocolRequest(PeerId, Packet),
-  SendPacketProtocolResponse(ResponseChannel<Packet>, Packet),
+  /// Send a pairing protocol request (pairing module only)
+  SendPairingProtocolRequest(PeerId, Packet),
+  /// Send a pairing protocol response (pairing module only)
+  SendPairingProtocolResponse(ResponseChannel<Packet>, Packet),
 }
 
 #[derive(NetworkBehaviour)]
@@ -222,11 +239,11 @@ impl NetworkManager {
                   debug!("Closing stream for {}", peer_id);
                   todo!()
                 },
-                NetworkCommand::SendPacketProtocolRequest(peer_id, packet) => {
+                NetworkCommand::SendPairingProtocolRequest(peer_id, packet) => {
                   debug!("Sending pairing protocol request to {}", peer_id);
                   let _ = swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
                 },
-                NetworkCommand::SendPacketProtocolResponse(ch, packet) => {
+                NetworkCommand::SendPairingProtocolResponse(ch, packet) => {
                   if ch.is_open() {
                     debug!("Sending pairing protocl response");
                     let _ = swarm.behaviour_mut().pairing_protocol.send_response(ch, packet);

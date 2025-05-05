@@ -95,7 +95,7 @@ impl MulticonnectModule for PairingModule {
           debug!("[first] Sending metadata to {}", peer_id);
           let _ = self
             .pairing_protocol_send
-            .send(NetworkCommand::SendPacketProtocolRequest(
+            .send(NetworkCommand::SendPairingProtocolRequest(
               peer_id,
               Packet::S1PeerMeta(S1PeerMeta::from_device(&ctx.this_device)),
             ))
@@ -128,7 +128,7 @@ impl MulticonnectModule for PairingModule {
             // Send the response
             let _ = self
               .pairing_protocol_send
-              .send(NetworkCommand::SendPacketProtocolResponse(
+              .send(NetworkCommand::SendPairingProtocolResponse(
                 ch,
                 Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted)),
               ))
@@ -150,7 +150,7 @@ impl MulticonnectModule for PairingModule {
             .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer));
           let _ = self
             .pairing_protocol_send
-            .send(NetworkCommand::SendPacketProtocolRequest(
+            .send(NetworkCommand::SendPairingProtocolRequest(
               device.peer,
               Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid)),
             ))
@@ -197,7 +197,7 @@ impl MulticonnectModule for PairingModule {
                         guard.add_device(device);
 
                         debug!("[second] Sending meta to {}", peer_id);
-                        let _ = pairing_protocol_send.send(NetworkCommand::SendPacketProtocolResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
+                        let _ = pairing_protocol_send.send(NetworkCommand::SendPairingProtocolResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
 
                       },
                       Packet::P2PeerPairRequest(packet) => {
