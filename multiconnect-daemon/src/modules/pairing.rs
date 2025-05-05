@@ -1,10 +1,7 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use libp2p::{
-  request_response::ResponseChannel,
-  PeerId,
-};
+use libp2p::{request_response::ResponseChannel, PeerId};
 use log::{debug, info, warn};
 use multiconnect_protocol::{
   local::peer::{L0PeerFound, L2PeerPairRequest, L3PeerPairResponse},
@@ -19,7 +16,7 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
-  networking::{MulticonnectNetworkEvent, NetworkCommand},
+  networking::{NetworkCommand, NetworkEvent, PairingProtocolEvent},
   store::Store,
 };
 
@@ -62,7 +59,7 @@ pub struct PairingModule {
   /// A channel for sending network commands
   pairing_protocol_send: mpsc::Sender<NetworkCommand>,
   /// A channel for reciving pairing protocol events
-  pairing_protocol_recv: Option<mpsc::Receiver<MulticonnectNetworkEvent>>,
+  pairing_protocol_recv: Option<mpsc::Receiver<PairingProtocolEvent>>,
   /// Store
   store: Arc<RwLock<Store>>,
 }
@@ -70,7 +67,7 @@ pub struct PairingModule {
 impl PairingModule {
   pub async fn new(
     pairing_protocol_send: mpsc::Sender<NetworkCommand>,
-    pairing_protocol_recv: mpsc::Receiver<MulticonnectNetworkEvent>,
+    pairing_protocol_recv: mpsc::Receiver<PairingProtocolEvent>,
   ) -> Self {
     Self {
       pending_requests: Arc::new(Mutex::new(HashMap::new())),
@@ -90,10 +87,10 @@ impl MulticonnectModule for PairingModule {
   /// No real peer to pper happens here, this is just for discovery (easy way to
   /// pass msgs is to send packets from self on channel)
   #[doc = " Runs when the swarm recivies a packet from another peer"]
-  async fn on_peer_packet(&mut self, packet: Packet, _source: PeerId, ctx: &mut MulticonnectCtx) {
-    match packet {
-      Packet::L6PeerDiscovered(packet) => {
-        let peer_id = PeerId::from_str(&packet.peer_id).unwrap();
+  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
+    match event {
+      NetworkEvent::PeerExpired(id) => {}
+      NetworkEvent::PeerDiscoverd(peer_id) => {
         if ctx.this_device.peer > peer_id {
           debug!("[first] Sending metadata to {}", peer_id);
           let _ = self
@@ -105,19 +102,18 @@ impl MulticonnectModule for PairingModule {
             .await;
         }
       }
-      Packet::L2PeerPairRequest(packet) => {
-        let device = bincode::deserialize::<Device>(&packet.device).unwrap(); // Get the target peer to send the request to from the frontend
-        debug!("Sending pair request to: {}, id = {}", device.peer, packet.req_uuid);
-        let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-        self
-          .pending_requests
-          .lock()
-          .await
-          .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer)); // Add the request to pending requests so we know if we get a response
-        ctx.send_to_peer(device.peer, Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid))).await;
+      NetworkEvent::ConnectionOpenRequest(peer_id) => {
+        if let Some((_, paired)) = ctx.get_device(&peer_id) {
+          debug!("Recived connection request from {} (saved: {})", peer_id, paired);
+          if *paired {
+            ctx.approve_inbound_stream(peer_id).await;
+          } else {
+            ctx.deny_inbound_stream(peer_id).await;
+          }
+        }
       }
       _ => {}
-    }
+    };
   }
 
   #[doc = " Runs when the daemon recives a packet from the frontend"]
@@ -188,7 +184,7 @@ impl MulticonnectModule for PairingModule {
           tokio::select! {
             event = ch.recv() => if let Some(event) = event {
               match event {
-                  MulticonnectNetworkEvent::RecvRequest(peer_id, packet, response_channel) => {
+                  PairingProtocolEvent::RecvRequest(peer_id, packet, response_channel) => {
                     match packet {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
@@ -221,7 +217,7 @@ impl MulticonnectModule for PairingModule {
                       }
                     }
                   },
-                  MulticonnectNetworkEvent::RecvResponse(peer_id, packet) => {
+                  PairingProtocolEvent::RecvResponse(peer_id, packet) => {
                     match packet {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
@@ -253,17 +249,17 @@ impl MulticonnectModule for PairingModule {
                       },
                     }
                   },
-                  MulticonnectNetworkEvent::ConnectionOpenRequest(peer_id) => {
-                    let guard = ctx.lock().await;
-                    if let Some((_, paired)) = guard.get_device(&peer_id) {
-                      debug!("Recived connection request from {} (saved: {})", peer_id, paired);
-                      if *paired {
-                        let _ = pairing_protocol_send.send(NetworkCommand::ApproveStream(peer_id)).await;
-                      } else {
-                        let _ = pairing_protocol_send.send(NetworkCommand::DenyStream(peer_id)).await;
-                      }
-                    }
-                  },
+                  // PairingProtocolEvent::ConnectionOpenRequest(peer_id) => {
+                  //   let guard = ctx.lock().await;
+                  //   if let Some((_, paired)) = guard.get_device(&peer_id) {
+                  //     debug!("Recived connection request from {} (saved: {})", peer_id, paired);
+                  //     if *paired {
+                  //       let _ = pairing_protocol_send.send(NetworkCommand::ApproveStream(peer_id)).await;
+                  //     } else {
+                  //       let _ = pairing_protocol_send.send(NetworkCommand::DenyStream(peer_id)).await;
+                  //     }
+                  //   }
+                  // },
                   _ => {}
               }
             },

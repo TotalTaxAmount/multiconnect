@@ -66,12 +66,6 @@ impl L3PeerPairResponse {
   }
 }
 
-impl L6PeerDiscovered {
-  pub fn new(peer_id: &PeerId) -> Self {
-    Self { id: Packet::create_id(), peer_id: peer_id.to_string() }
-  }
-}
-
 impl L7SavedPeerStatus {
   pub fn new(peers: Vec<SavedPeer>) -> Self {
     Self { id: Packet::create_id(), peers }

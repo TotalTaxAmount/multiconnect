@@ -11,7 +11,7 @@ use tokio::{
 };
 
 use crate::{
-  networking::{NetworkCommand, NetworkManager},
+  networking::{NetworkCommand, NetworkEvent, NetworkManager},
   SharedDaemon,
 };
 
@@ -31,9 +31,13 @@ pub trait MulticonnectModule: Send + Sync {
   /// Runs every 20ms, used for background tasks/other stuff service is doing
   async fn periodic(&mut self, ctx: &mut MulticonnectCtx);
   /// Runs when the swarm recivies a packet from another peer
-  async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx);
+  // async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx);
   /// Runs when the daemon recives a packet from the frontend
   async fn on_frontend_packet(&mut self, packet: Packet, ctx: &mut MulticonnectCtx);
+  /// Runs when a peer is discovered
+  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx);
+  // /// Runs when the frontend connects
+  // async fn on_fronend_connected(&mut self, ctx: &mut MulticonnectCtx);
   /// Runs once when the module is started
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>);
 }
@@ -42,7 +46,7 @@ pub trait MulticonnectModule: Send + Sync {
 /// the frontend/peers and see what devices and currently paired
 pub struct MulticonnectCtx {
   /// TA channel to send packets to various locations
-  send_packet_tx: mpsc::Sender<Action>,
+  action_tx: mpsc::Sender<Action>,
   /// A HashMap of PeerIds and corrosponding Devices and weather they are paired
   /// or not
   devices: HashMap<PeerId, (Device, bool)>,
@@ -53,17 +57,29 @@ pub struct MulticonnectCtx {
 impl MulticonnectCtx {
   /// Create a new instance of `MulticonnectCtx` <br />
   pub fn new(send_packet_tx: mpsc::Sender<Action>, this_device: Device) -> Self {
-    Self { send_packet_tx, this_device, devices: HashMap::new() }
+    Self { action_tx: send_packet_tx, this_device, devices: HashMap::new() }
   }
 
   /// Send a packet to the frontend
   pub async fn send_to_frontend(&self, packet: Packet) {
-    let _ = self.send_packet_tx.send(Action::SendFrontend(packet)).await;
+    let _ = self.action_tx.send(Action::SendFrontend(packet)).await;
   }
 
   /// Send a packet to a peer
   pub async fn send_to_peer(&self, target: PeerId, packet: Packet) {
-    let _ = self.send_packet_tx.send(Action::SendPeer(target, packet)).await;
+    let _ = self.action_tx.send(Action::SendPeer(target, packet)).await;
+  }
+
+  pub async fn approve_inbound_stream(&self, peer_id: PeerId) {
+    let _ = self.action_tx.send(Action::ApproveStream(peer_id)).await;
+  }
+
+  pub async fn deny_inbound_stream(&self, peer_id: PeerId) {
+    let _ = self.action_tx.send(Action::DenyStream(peer_id)).await;
+  }
+
+  pub async fn close_stream(&self, peer_id: PeerId) {
+    let _ = self.action_tx.send(Action::CloseStream(peer_id)).await;
   }
 
   /// Get the HashMap of paired devices
@@ -139,7 +155,7 @@ impl ModuleManager {
 
     let daemon_clone = self.daemon.clone();
     let mut recv_frontend_packet_rx = self.daemon.recv_packet_channel();
-    let mut recv_peer_packet_rx = self.network_manager.recv_packet_channel();
+    let mut recv_peer_packet_rx = self.network_manager.recv_event_channel();
     let send_frontend_packet_tx = self.daemon.send_packet_channel();
     let send_network_command = self.network_manager.send_command_channel();
 
@@ -160,11 +176,11 @@ impl ModuleManager {
             }
           },
 
-          event = recv_peer_packet_rx.recv() => if let Ok((source, packet)) = event {
-            debug!("Calling on_peer_packet");
+          event = recv_peer_packet_rx.recv() => if let Ok(event) = event {
+            debug!("Calling on_network_event");
             let mut ctx = ctx.lock().await;
             for module in modules.iter_mut() {
-              module.on_peer_packet(packet.clone(), source, &mut ctx).await;
+              module.on_network_event(event.clone(), &mut ctx).await;
             }
           } else {
             error!("Error reciving peer packet channel");

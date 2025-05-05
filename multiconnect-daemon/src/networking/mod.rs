@@ -12,10 +12,7 @@ use libp2p::{
 };
 use log::{debug, info, trace, warn};
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{
-  local::peer::{L1PeerExpired, L6PeerDiscovered},
-  Device, Packet,
-};
+use multiconnect_protocol::{Device, Packet};
 use protocols::{BehaviourEvent, MulticonnectDataBehaviour, PairingCodec};
 use tokio::{
   fs::File,
@@ -24,10 +21,18 @@ use tokio::{
 };
 use tracing_subscriber::EnvFilter;
 
+// Has to be seperate because `ResponseChannel` is not `Clone`
 #[derive(Debug)]
-pub enum MulticonnectNetworkEvent {
+pub enum PairingProtocolEvent {
   RecvRequest(PeerId, Packet, ResponseChannel<Packet>),
   RecvResponse(PeerId, Packet),
+}
+
+#[derive(Debug, Clone)]
+pub enum NetworkEvent {
+  PeerDiscoverd(PeerId),
+  PeerExpired(PeerId),
+  PacketRecived(PeerId, Packet),
   ConnectionOpenRequest(PeerId),
   ConnectionClosed(PeerId),
 }
@@ -74,11 +79,11 @@ pub struct NetworkManager {
   send_command_tx: mpsc::Sender<NetworkCommand>,
   send_command_rx: Option<mpsc::Receiver<NetworkCommand>>,
 
-  recv_peer_packet_rx: broadcast::Receiver<(PeerId, Packet)>,
-  recv_peer_packet_tx: broadcast::Sender<(PeerId, Packet)>,
+  network_event_rx: broadcast::Receiver<NetworkEvent>,
+  network_event_tx: broadcast::Sender<NetworkEvent>,
 
-  mc_network_event_recv_rx: Option<mpsc::Receiver<MulticonnectNetworkEvent>>,
-  mc_network_event_recv_tx: mpsc::Sender<MulticonnectNetworkEvent>,
+  pairing_protocol_event_rx: Option<mpsc::Receiver<PairingProtocolEvent>>,
+  pairing_protocol_event_tx: mpsc::Sender<PairingProtocolEvent>,
 
   keys: Keypair,
 }
@@ -86,8 +91,8 @@ pub struct NetworkManager {
 impl NetworkManager {
   pub async fn new() -> Self {
     let (send_command_tx, send_command_rx) = mpsc::channel::<NetworkCommand>(100);
-    let (recv_peer_packet_tx, recv_peer_packet_rx) = broadcast::channel::<(PeerId, Packet)>(100);
-    let (mc_network_event_recv_tx, mc_network_event_recv_rx) = mpsc::channel::<MulticonnectNetworkEvent>(10);
+    let (network_event_tx, network_event_rx) = broadcast::channel::<NetworkEvent>(100);
+    let (pairing_protocol_event_tx, pairing_protocol_event_rx) = mpsc::channel::<PairingProtocolEvent>(10);
 
     let keys = Self::get_keys().await.unwrap();
 
@@ -95,11 +100,11 @@ impl NetworkManager {
       send_command_tx,
       send_command_rx: Some(send_command_rx),
 
-      recv_peer_packet_rx,
-      recv_peer_packet_tx,
+      network_event_rx,
+      network_event_tx,
 
-      mc_network_event_recv_tx,
-      mc_network_event_recv_rx: Some(mc_network_event_recv_rx),
+      pairing_protocol_event_tx,
+      pairing_protocol_event_rx: Some(pairing_protocol_event_rx),
       keys,
     }
   }
@@ -107,8 +112,8 @@ impl NetworkManager {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
     let mut send_packet_rx = self.send_command_rx.take().unwrap();
-    let recv_peer_packet_tx = self.recv_peer_packet_tx.clone();
-    let mc_network_event_recv_tx = self.mc_network_event_recv_tx.clone();
+    let network_event_tx = self.network_event_tx.clone();
+    let pairing_protocol_event_tx = self.pairing_protocol_event_tx.clone();
 
     debug!("Initializing new swarm");
     let mut discovered_peers: HashSet<PeerId> = HashSet::new();
@@ -151,7 +156,7 @@ impl NetworkManager {
                 if !discovered_peers.contains(&peer_id) {
                   discovered_peers.insert(peer_id);
                   info!("Discovered peer: {}", peer_id);
-                  let _ = recv_peer_packet_tx.send((this_device.peer, Packet::L6PeerDiscovered(L6PeerDiscovered::new(&peer_id)))); // Notify modules peer found
+                  network_event_tx.send(NetworkEvent::PeerDiscoverd(peer_id));
                 }
               }
             }
@@ -159,7 +164,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 if discovered_peers.remove(&peer_id) {
                   info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                  let _ = recv_peer_packet_tx.send((this_device.peer, Packet::L1PeerExpired(L1PeerExpired::new(&peer_id)))); // Notify modules that peer expired
+                  network_event_tx.send(NetworkEvent::PeerExpired(peer_id));
                 }
               }
             }
@@ -167,13 +172,13 @@ impl NetworkManager {
               match message {
                 Message::Request { request, channel, .. } => {
                   debug!("Recv request");
-                  if let Err(e) = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::RecvRequest(peer, request, channel)).await {
+                  if let Err(e) = pairing_protocol_event_tx.send(PairingProtocolEvent::RecvRequest(peer, request, channel)).await {
                     warn!("Error sending request on channel: {}", e);
                   }
                 },
                 Message::Response { response, .. } => {
                   debug!("Recv response");
-                  if let Err(e) = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::RecvResponse(peer, response)).await {
+                  if let Err(e) = pairing_protocol_event_tx.send(PairingProtocolEvent::RecvResponse(peer, response)).await {
                     warn!("Error sending response on channel: {}", e);
                   }
                 }
@@ -181,15 +186,15 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::PacketRecived(source, packet))) => {
               debug!("Received multiconnect protocol event from {}", source);
-              let _ = recv_peer_packet_tx.send((source, packet));
+              let _ = network_event_tx.send(NetworkEvent::PacketRecived(source, packet));
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionOpenRequest(peer))) => {
               debug!("Stream open request from {}", peer);
-              let _ = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::ConnectionOpenRequest(peer)).await;
+              let _ = network_event_tx.send(NetworkEvent::ConnectionOpenRequest(peer));
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionClosed(peer))) => {
               info!("Channel to {} closed", peer);
-              let _ = mc_network_event_recv_tx.send(MulticonnectNetworkEvent::ConnectionClosed(peer));
+              let _ = network_event_tx.send(NetworkEvent::ConnectionClosed(peer));
             }
             _ => {
               trace!("Event: {:?}", event);
@@ -272,12 +277,12 @@ impl NetworkManager {
     self.send_command_tx.clone()
   }
 
-  pub fn recv_packet_channel(&self) -> broadcast::Receiver<(PeerId, Packet)> {
-    self.recv_peer_packet_rx.resubscribe()
+  pub fn recv_event_channel(&self) -> broadcast::Receiver<NetworkEvent> {
+    self.network_event_rx.resubscribe()
   }
 
-  pub fn get_mc_event_recv(&mut self) -> Option<mpsc::Receiver<MulticonnectNetworkEvent>> {
-    if let Some(ch) = self.mc_network_event_recv_rx.take() {
+  pub fn get_mc_event_recv(&mut self) -> Option<mpsc::Receiver<PairingProtocolEvent>> {
+    if let Some(ch) = self.pairing_protocol_event_rx.take() {
       return Some(ch);
     }
     warn!("Attempted to get channel when it has already been taken");
@@ -285,6 +290,4 @@ impl NetworkManager {
   }
 }
 #[cfg(test)]
-mod tests {
-  
-}
+mod tests {}

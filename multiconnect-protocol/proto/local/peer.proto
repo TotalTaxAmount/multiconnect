@@ -80,11 +80,3 @@ message L8SavedPeerUpdate {
   optional bytes device = 5;
   optional uint64 last_seen = 6;
 }
-
-
-// Should be L0 im lazy tho
-message L6PeerDiscovered {
-  required uint32 id = 1;
-  required string peer_id = 2;
-}
-
