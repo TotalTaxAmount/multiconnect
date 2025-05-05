@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use libp2p::{request_response::ResponseChannel, PeerId};
 use log::{debug, info, warn};
 use multiconnect_protocol::{
-  local::peer::{L0PeerFound, L2PeerPairRequest, L3PeerPairResponse, L8SavedPeerUpdate},
+  local::peer::{L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L8SavedPeerUpdate},
   p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   shared::peer::S1PeerMeta,
   Device, Packet,
@@ -87,8 +87,10 @@ impl MulticonnectModule for PairingModule {
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
     match event {
       NetworkEvent::PeerExpired(peer_id) => {
-        if let Some(_) = ctx.get_device(&peer_id) {
+        if let Some((_, Some(true))) = ctx.get_device(&peer_id) {
           ctx.send_to_frontend(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::update_online(&peer_id, false))).await;
+        } else {
+          ctx.send_to_frontend(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await;
         }
       }
       NetworkEvent::PeerDiscoverd(peer_id) => {

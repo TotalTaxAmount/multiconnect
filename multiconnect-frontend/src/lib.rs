@@ -44,7 +44,7 @@ pub fn run(port: u16) {
     .invoke_handler(tauri::generate_handler![
       send_pairing_request,
       send_pairing_response,
-      refresh_mdns,
+      refresh_peers,
       set_theme,
       get_theme
     ])
@@ -76,7 +76,7 @@ async fn send_pairing_response(controller: State<'_, Controller>, accepted: bool
 
 /// Refresh mDNS
 #[tauri::command]
-async fn refresh_mdns(controller: State<'_, Controller>) -> Result<(), ()> {
+async fn refresh_peers(controller: State<'_, Controller>) -> Result<(), ()> {
   controller.send_packet(Packet::L4Refresh(L4Refresh::new())).await;
   Ok(())
 }
