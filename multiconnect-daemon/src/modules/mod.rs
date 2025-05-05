@@ -1,10 +1,12 @@
 pub mod pairing;
+pub mod store;
 
 use async_trait::async_trait;
 use libp2p::PeerId;
 use log::{debug, error};
 use multiconnect_protocol::{Device, Packet};
 use std::{collections::HashMap, sync::Arc};
+use store::Store;
 use tokio::{
   sync::{mpsc, Mutex},
   time::{self, Duration},
@@ -12,7 +14,7 @@ use tokio::{
 
 use crate::{
   networking::{NetworkCommand, NetworkEvent, NetworkManager},
-  SharedDaemon,
+  FrontendEvent, SharedDaemon,
 };
 
 #[derive(Debug, PartialEq)]
@@ -33,7 +35,7 @@ pub trait MulticonnectModule: Send + Sync {
   /// Runs when the swarm recivies a packet from another peer
   // async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx);
   /// Runs when the daemon recives a packet from the frontend
-  async fn on_frontend_packet(&mut self, packet: Packet, ctx: &mut MulticonnectCtx);
+  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx);
   /// Runs when a peer is discovered
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx);
   // /// Runs when the frontend connects
@@ -49,15 +51,18 @@ pub struct MulticonnectCtx {
   action_tx: mpsc::Sender<Action>,
   /// A HashMap of PeerIds and corrosponding Devices and weather they are paired
   /// or not
-  devices: HashMap<PeerId, (Device, bool)>,
+  // devices: HashMap<PeerId, (Device, bool)>,
   /// The current device
   this_device: Device,
+  /// Device store
+  store: Store,
 }
 
 impl MulticonnectCtx {
   /// Create a new instance of `MulticonnectCtx` <br />
-  pub fn new(send_packet_tx: mpsc::Sender<Action>, this_device: Device) -> Self {
-    Self { action_tx: send_packet_tx, this_device, devices: HashMap::new() }
+  pub async fn new(send_packet_tx: mpsc::Sender<Action>, this_device: Device) -> Self {
+    let store = Store::new().await;
+    Self { action_tx: send_packet_tx, this_device, store }
   }
 
   /// Send a packet to the frontend
@@ -84,25 +89,30 @@ impl MulticonnectCtx {
 
   /// Get the HashMap of paired devices
   pub fn get_devices(&self) -> &HashMap<PeerId, (Device, bool)> {
-    &self.devices
+    &self.store.get_saved_devices()
   }
 
   /// Get a paired device
   pub fn get_device(&self, id: &PeerId) -> Option<&(Device, bool)> {
-    self.devices.get(id)
+    self.store.get_device(id)
+    // self.devices.get(id)
   }
 
   pub fn get_device_mut(&mut self, id: &PeerId) -> Option<&mut (Device, bool)> {
-    self.devices.get_mut(id)
+    self.store.get_device_mut(id)
   }
   /// Add a device to the list of paired devices
   pub fn add_device(&mut self, device: Device) {
-    self.devices.insert(device.peer, (device, false));
+    self.store.save_device(device.peer, device, None);
   }
 
   /// Remove a paired  device
   pub fn remove_device(&mut self, id: &PeerId) -> Option<(Device, bool)> {
-    self.devices.remove(id)
+    self.store.remove_device(id)
+  }
+
+  pub fn device_exists(&self, id: &PeerId) -> bool {
+    self.store.contains_device(id)
   }
 
   /// Get the local peer id
@@ -127,13 +137,12 @@ pub struct ModuleManager {
 
 impl ModuleManager {
   /// Create a new module manager
-  pub fn new(network_manager: NetworkManager, daemon: SharedDaemon) -> Self {
+  pub async fn new(network_manager: NetworkManager, daemon: SharedDaemon) -> Self {
     let (send_packet_tx, send_packet_rx) = mpsc::channel(100);
     Self {
-      ctx: Arc::new(Mutex::new(MulticonnectCtx::new(
-        send_packet_tx,
-        Device::this(network_manager.get_local_peer_id()),
-      ))),
+      ctx: Arc::new(Mutex::new(
+        MulticonnectCtx::new(send_packet_tx, Device::this(network_manager.get_local_peer_id())).await,
+      )),
       modules: Vec::new(),
       daemon,
       network_manager,
@@ -168,11 +177,11 @@ impl ModuleManager {
     tokio::spawn(async move {
       loop {
         tokio::select! {
-          event = recv_frontend_packet_rx.recv() => if let Ok(packet) = event {
-            debug!("Calling on_frontend_packet");
+          event = recv_frontend_packet_rx.recv() => if let Ok(event) = event {
+            debug!("Calling on_frontend_event");
             let mut ctx = ctx.lock().await;
             for module in modules.iter_mut() {
-              module.on_frontend_packet(packet.clone(), &mut ctx).await;
+              module.on_frontend_event(event.clone(), &mut ctx).await;
             }
           },
 

@@ -94,6 +94,10 @@ impl L8SavedPeerUpdate {
     };
     Self { id: Packet::create_id(), peer_id: peer_id.to_string(), device, online, paired, last_seen }
   }
+
+  pub fn update_online(peer_id: &PeerId, online: bool) -> Self {
+    Self::new(peer_id, None, None, Some(online), Some(SystemTime::now()))
+  }
 }
 
 impl S1PeerMeta {

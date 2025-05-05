@@ -1,6 +1,5 @@
 pub mod modules;
 pub mod networking;
-pub mod store;
 
 use std::{sync::Arc, time::Duration};
 
@@ -15,6 +14,13 @@ use tokio::{
 };
 
 pub type SharedDaemon = Arc<Daemon>;
+
+#[derive(Debug, Clone)]
+pub enum FrontendEvent {
+  RecvPacket(Packet),
+  Connected,
+  Disconnected,
+}
 
 #[derive(FromArgs)]
 #[argh(help_triggers("-h", "--help"))]
@@ -34,9 +40,9 @@ pub struct Daemon {
   listener: TcpListener,
 
   /// Incoming packet sender form clients
-  incoming_tx: broadcast::Sender<Packet>,
+  incoming_tx: broadcast::Sender<FrontendEvent>,
   /// Incoming packet receiver form clients
-  incoming_rx: broadcast::Receiver<Packet>,
+  incoming_rx: broadcast::Receiver<FrontendEvent>,
 
   /// Outgoing packet sender to clients
   outgoing_tx: mpsc::Sender<Packet>,
@@ -81,6 +87,7 @@ impl Daemon {
           let incoming_tx = self.incoming_tx.clone();
           let outgoing_rx = self.outgoing_rx.clone();
 
+          incoming_tx.send(FrontendEvent::Connected);
           tokio::spawn(async move { Self::handle(stream, incoming_tx, outgoing_rx).await });
         }
         Err(e) => {
@@ -104,7 +111,7 @@ impl Daemon {
   // TODO: Possibly use self in the future
   async fn handle(
     stream: TcpStream,
-    incoming_tx: broadcast::Sender<Packet>,
+    incoming_tx: broadcast::Sender<FrontendEvent>,
     outgoing_rx: Arc<Mutex<mpsc::Receiver<Packet>>>,
   ) {
     let (mut read_half, mut write_half) = stream.into_split();
@@ -137,7 +144,7 @@ impl Daemon {
 
                 debug!("Received {:?} packet", packet);
 
-                if let Err(e) = incoming_tx.send(packet) {
+                if let Err(e) = incoming_tx.send(FrontendEvent::RecvPacket( packet)) {
                   error!("Failed to add send packet (local): {}", e);
                 };
               }
@@ -176,6 +183,8 @@ impl Daemon {
         }
       }
     }
+
+    incoming_tx.send(FrontendEvent::Disconnected);
   }
 
   /// Get the stream for sending packets
@@ -184,7 +193,7 @@ impl Daemon {
   }
 
   /// Get a channel for incoming packets
-  pub fn recv_packet_channel(&self) -> broadcast::Receiver<Packet> {
+  pub fn recv_packet_channel(&self) -> broadcast::Receiver<FrontendEvent> {
     self.incoming_rx.resubscribe()
   }
 }

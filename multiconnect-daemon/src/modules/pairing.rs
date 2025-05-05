@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use libp2p::{request_response::ResponseChannel, PeerId};
 use log::{debug, info, warn};
 use multiconnect_protocol::{
-  local::peer::{L0PeerFound, L2PeerPairRequest, L3PeerPairResponse},
+  local::peer::{L0PeerFound, L2PeerPairRequest, L3PeerPairResponse, L8SavedPeerUpdate},
   p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   shared::peer::S1PeerMeta,
   Device, Packet,
@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{
   networking::{NetworkCommand, NetworkEvent, PairingProtocolEvent},
-  store::Store,
+  FrontendEvent,
 };
 
 use super::{MulticonnectCtx, MulticonnectModule};
@@ -45,7 +45,7 @@ use super::{MulticonnectCtx, MulticonnectModule};
 ///     - If its accepted add it it to pairied peers (TODO: Also save to disk to
 ///       auto pair later)
 ///     - Send result to frontend
-///  - *Reciving*:
+///  - *Receiving*:
 ///     - Recivie a P2PairRequest and add it to pending requests
 ///     - Send a L2PeerPairRequest to the frontend
 ///     - Get a response from the frontend (L3PeerPairResponse)
@@ -60,8 +60,6 @@ pub struct PairingModule {
   pairing_protocol_send: mpsc::Sender<NetworkCommand>,
   /// A channel for reciving pairing protocol events
   pairing_protocol_recv: Option<mpsc::Receiver<PairingProtocolEvent>>,
-  /// Store
-  store: Arc<RwLock<Store>>,
 }
 
 impl PairingModule {
@@ -74,7 +72,7 @@ impl PairingModule {
       pairing_protocol_recv: Some(pairing_protocol_recv),
       pairing_protocol_send,
       res_channels: Arc::new(Mutex::new(HashMap::new())),
-      store: Arc::new(RwLock::new(Store::new().await)),
+      // store: Arc::new(RwLock::new(Store::new().await)),
     }
   }
 }
@@ -89,8 +87,15 @@ impl MulticonnectModule for PairingModule {
   #[doc = " Runs when the swarm recivies a packet from another peer"]
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
     match event {
-      NetworkEvent::PeerExpired(id) => {}
+      NetworkEvent::PeerExpired(peer_id) => {
+        if let Some(_) = ctx.get_device(&peer_id) {
+          ctx.send_to_frontend(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::update_online(&peer_id, false))).await;
+        }
+      }
       NetworkEvent::PeerDiscoverd(peer_id) => {
+        if let Some(_) = ctx.get_device(&peer_id) {
+          ctx.send_to_frontend(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::update_online(&peer_id, true))).await;
+        }
         if ctx.this_device.peer > peer_id {
           debug!("[first] Sending metadata to {}", peer_id);
           let _ = self
@@ -117,46 +122,51 @@ impl MulticonnectModule for PairingModule {
   }
 
   #[doc = " Runs when the daemon recives a packet from the frontend"]
-  async fn on_frontend_packet(&mut self, packet: Packet, ctx: &mut MulticonnectCtx) {
-    match packet {
-      Packet::L3PeerPairResponse(packet) => {
-        let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-        // Check if there is a pending request for that id
-        if let Some((_, Packet::P2PeerPairRequest(_req), source)) = self.pending_requests.lock().await.remove(&uuid) {
-          if let Some((_, ch)) = self.res_channels.lock().await.remove(&source) {
-            debug!("Sending back response");
-            // Send the response
-            let _ = self
-              .pairing_protocol_send
-              .send(NetworkCommand::SendPairingProtocolResponse(
-                ch,
-                Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted)),
-              ))
-              .await;
-          } else {
-            warn!("Failed to find response channel for request")
+  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) {
+    match event {
+      FrontendEvent::RecvPacket(packet) => match packet {
+        Packet::L3PeerPairResponse(packet) => {
+          let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+          // Check if there is a pending request for that id
+          if let Some((_, Packet::P2PeerPairRequest(_req), source)) = self.pending_requests.lock().await.remove(&uuid) {
+            if let Some((_, ch)) = self.res_channels.lock().await.remove(&source) {
+              debug!("Sending back response");
+              // Send the response
+              let _ = self
+                .pairing_protocol_send
+                .send(NetworkCommand::SendPairingProtocolResponse(
+                  ch,
+                  Packet::P3PeerPairResponse(P3PeerPairResponse::new(uuid, packet.accepted)),
+                ))
+                .await;
+            } else {
+              warn!("Failed to find response channel for request")
+            }
           }
         }
-      }
-      Packet::L2PeerPairRequest(packet) => {
-        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
-        if ctx.devices.contains_key(&device.peer) {
-          debug!("Sending pair request to: {}, id = {}", device.peer, packet.req_uuid);
-          let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-          self
-            .pending_requests
-            .lock()
-            .await
-            .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer));
-          let _ = self
-            .pairing_protocol_send
-            .send(NetworkCommand::SendPairingProtocolRequest(
-              device.peer,
-              Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid)),
-            ))
-            .await;
+        Packet::L2PeerPairRequest(packet) => {
+          let device: Device = bincode::deserialize::<Device>(&packet.device).unwrap();
+          if ctx.device_exists(&device.peer) {
+            debug!("Sending pair request to: {}, id = {}", device.peer, packet.req_uuid);
+            let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+            self
+              .pending_requests
+              .lock()
+              .await
+              .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer));
+            let _ = self
+              .pairing_protocol_send
+              .send(NetworkCommand::SendPairingProtocolRequest(
+                device.peer,
+                Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid)),
+              ))
+              .await;
+          }
         }
-      }
+        _ => {}
+      },
+
+      FrontendEvent::Connected => {}
       _ => {}
     }
   }
