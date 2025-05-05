@@ -1,9 +1,11 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use libp2p::PeerId;
+use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::{
-  local::peer::*,
+  local::peer::{l7_saved_peer_status::SavedPeer, *},
   p2p::{peer::*, *},
   shared::peer::*,
   Device, Packet,
@@ -67,6 +69,36 @@ impl L3PeerPairResponse {
 impl L6PeerDiscovered {
   pub fn new(peer_id: &PeerId) -> Self {
     Self { id: Packet::create_id(), peer_id: peer_id.to_string() }
+  }
+}
+
+impl L7SavedPeerStatus {
+  pub fn new(peers: Vec<SavedPeer>) -> Self {
+    Self { id: Packet::create_id(), peers }
+  }
+}
+
+impl L8SavedPeerUpdate {
+  pub fn new(
+    peer_id: &PeerId,
+    device: Option<&Device>,
+    paired: Option<bool>,
+    online: Option<bool>,
+    last_seen: Option<SystemTime>,
+  ) -> Self {
+    let device = if let Some(d) = device {
+      let raw = bincode::serialize(d).unwrap();
+      Some(raw)
+    } else {
+      None
+    };
+
+    let last_seen = if let Some(instant) = last_seen {
+      Some(instant.duration_since(UNIX_EPOCH).unwrap().as_secs())
+    } else {
+      None
+    };
+    Self { id: Packet::create_id(), peer_id: peer_id.to_string(), device, online, paired, last_seen }
   }
 }
 

@@ -44,6 +44,44 @@ message L4Refresh {
   required uint32 id = 1;
 }
 
+// Send status about a saved peer
+message L7SavedPeerStatus {
+  // The id of the packet
+  required uint32 id = 1;
+  // A list of saved peers
+  repeated SavedPeer peers = 2;
+
+  // Message about a saved peer
+  message SavedPeer {
+    // The peer id of the peer
+    required string peer_id = 1;
+    // If the peer is online or not
+    required bool online = 2;
+    // If the peer is paired or not
+    required bool paired = 3;
+    // The device info about the peer
+    required bytes device = 4;
+    // When it was last seen
+    required uint64 last_seen = 5;
+  }
+}
+
+// Update status of a single saved peer
+message L8SavedPeerUpdate {
+  // The packet id
+  required uint32 id = 1;
+
+  // The peer id being updated
+  required string peer_id = 2;
+
+  // Updated fields
+  optional bool online = 3;
+  optional bool paired = 4;
+  optional bytes device = 5;
+  optional uint64 last_seen = 6;
+}
+
+
 // Should be L0 im lazy tho
 message L6PeerDiscovered {
   required uint32 id = 1;
