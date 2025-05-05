@@ -1,5 +1,6 @@
 mod controller;
 mod daemon;
+mod modules;
 
 use std::str::FromStr;
 

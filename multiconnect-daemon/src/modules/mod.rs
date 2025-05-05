@@ -49,9 +49,6 @@ pub trait MulticonnectModule: Send + Sync {
 pub struct MulticonnectCtx {
   /// TA channel to send packets to various locations
   action_tx: mpsc::Sender<Action>,
-  /// A HashMap of PeerIds and corrosponding Devices and weather they are paired
-  /// or not
-  // devices: HashMap<PeerId, (Device, bool)>,
   /// The current device
   this_device: Device,
   /// Device store
