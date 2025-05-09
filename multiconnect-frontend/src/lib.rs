@@ -2,14 +2,16 @@ mod controller;
 mod daemon;
 mod modules;
 
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use argh::FromArgs;
 use controller::Controller;
 use daemon::Daemon;
+use log::debug;
+use modules::{FrontendModuleManager, TestModule};
 use multiconnect_config::CONFIG;
 use multiconnect_protocol::{local::peer::*, Device, Packet};
-use tauri::{async_runtime, Manager, State};
+use tauri::{async_runtime, AppHandle, EventLoopMessage, Manager, Runtime, State, Wry};
 use tokio::task;
 use uuid::Uuid;
 
@@ -36,50 +38,20 @@ pub fn run(port: u16) {
       task::block_in_place(|| {
         async_runtime::block_on(async {
           let daemon = Daemon::connect(&port).await.unwrap();
-          let controller = Controller::new(daemon, handle.clone()).await;
-          app.manage(controller)
+
+          let mut manager = FrontendModuleManager::new(daemon);
+          manager.init(handle.clone()).await;
+
+          app.manage(manager);
+          // let controller = Controller::new(daemon, handle.clone()).await;
+          // app.manage(controller)
         })
       });
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![
-      send_pairing_request,
-      send_pairing_response,
-      refresh_peers,
-      set_theme,
-      get_theme
-    ])
+    .invoke_handler(tauri::generate_handler![set_theme, get_theme,])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
-}
-
-/// Send a pairing request to a device
-/// Parameters:
-/// * `device` - The device to send the request to
-#[tauri::command]
-async fn send_pairing_request(controller: State<'_, Controller>, device: Device) -> Result<(), ()> {
-  let uuid = Uuid::new_v4();
-  controller.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await;
-  Ok(())
-}
-
-/// Send a response to a pairing request
-/// Parameters:
-/// * `accepted` - If the pairing request is accepted
-/// * `req_uuid` - The uuid of the request
-#[tauri::command]
-async fn send_pairing_response(controller: State<'_, Controller>, accepted: bool, req_uuid: &str) -> Result<(), ()> {
-  controller
-    .send_packet(Packet::L3PeerPairResponse(L3PeerPairResponse::new(accepted, Uuid::from_str(req_uuid).unwrap())))
-    .await;
-  Ok(())
-}
-
-/// Refresh mDNS
-#[tauri::command]
-async fn refresh_peers(controller: State<'_, Controller>) -> Result<(), ()> {
-  controller.send_packet(Packet::L4Refresh(L4Refresh::new())).await;
-  Ok(())
 }
 
 #[tauri::command]

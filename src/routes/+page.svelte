@@ -1,9 +1,10 @@
 <script lang="ts">
   import DeviceList from "$lib/componets/DeviceList.svelte";
   import { theme } from "$lib/theme";
+  import { writable } from "svelte/store";
   import "../app.css";
 
-  function toggleTheme() {
+  async function toggleTheme() {
     theme.update((t) => (t === "dark" ? "light" : "dark"));
   }
 
@@ -19,5 +20,6 @@
   <button on:click={toggleTheme}>
     Click Toggle theme to {currentTheme === "dark" ? "Light" : "Dark"}
   </button>
+
   <DeviceList />
 </main>

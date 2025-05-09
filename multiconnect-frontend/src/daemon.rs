@@ -106,13 +106,13 @@ impl Daemon {
     Ok(Arc::new(Self { incoming_rx, outgoing_tx }))
   }
 
-  /// Add a packet to the queue
+  /// Send a packet
   pub async fn send_packet(&self, packet: Packet) {
     let _ = self.outgoing_tx.send(packet).await;
   }
 
   /// Get a stream of incoming packets
-  pub fn packet_stream(&self) -> impl tokio_stream::Stream<Item = Result<Packet, BroadcastStreamRecvError>> {
-    BroadcastStream::new(self.incoming_rx.resubscribe())
+  pub fn packet_stream(&self) -> broadcast::Receiver<Packet> {
+    self.incoming_rx.resubscribe()
   }
 }

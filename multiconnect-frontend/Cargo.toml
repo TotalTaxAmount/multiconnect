@@ -33,3 +33,4 @@ uuid = { version = "1.16.0", features = ["v4"] }
 fern = { version = "0.7.1", features = ["colored"] }
 argh = "0.1.13"
 humantime = "2.2.0"
+async-trait = "0.1.88"

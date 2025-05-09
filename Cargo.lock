@@ -3380,6 +3380,7 @@ name = "multiconnect"
 version = "0.0.0-DEV"
 dependencies = [
  "argh",
+ "async-trait",
  "bincode",
  "fern",
  "humantime",
