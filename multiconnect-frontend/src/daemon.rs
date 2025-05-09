@@ -10,7 +10,6 @@ use tokio::{
     mpsc,
   },
 };
-use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 pub type SharedDaemon = Arc<Daemon>;
 const PORT: u16 = 10999;

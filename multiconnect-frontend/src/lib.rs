@@ -2,18 +2,13 @@ mod controller;
 mod daemon;
 mod modules;
 
-use std::{str::FromStr, sync::Arc};
 
 use argh::FromArgs;
-use controller::Controller;
 use daemon::Daemon;
-use log::debug;
-use modules::{FrontendModuleManager, TestModule};
+use modules::FrontendModuleManager;
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{local::peer::*, Device, Packet};
-use tauri::{async_runtime, AppHandle, EventLoopMessage, Manager, Runtime, State, Wry};
+use tauri::{async_runtime, Manager};
 use tokio::task;
-use uuid::Uuid;
 
 #[allow(dead_code)]
 const PORT: u16 = 10999;
@@ -39,7 +34,8 @@ pub fn run(port: u16) {
         async_runtime::block_on(async {
           let daemon = Daemon::connect(&port).await.unwrap();
 
-          let mut manager = FrontendModuleManager::new(daemon);
+          let manager = FrontendModuleManager::new(daemon);
+          /// Initalize modules
           manager.init(handle.clone()).await;
 
           app.manage(manager);

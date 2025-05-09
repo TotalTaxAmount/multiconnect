@@ -1,7 +1,6 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use libp2p::PeerId;
-use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::{

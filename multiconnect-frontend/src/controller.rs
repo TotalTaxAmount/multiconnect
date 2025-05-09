@@ -1,7 +1,6 @@
 use log::warn;
 use multiconnect_protocol::{Device, Packet};
 use tauri::{AppHandle, Emitter};
-use tokio_stream::StreamExt;
 
 use crate::daemon::SharedDaemon;
 

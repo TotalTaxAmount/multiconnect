@@ -6,11 +6,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use log::debug;
 use multiconnect_protocol::Packet;
-use tauri::{async_runtime, AppHandle, Runtime, Wry};
+use tauri::{AppHandle, Wry};
 use tokio::{sync::Mutex, time::interval};
-use tokio_stream::StreamExt;
 
 use crate::daemon::SharedDaemon;
 
@@ -58,7 +56,6 @@ impl FrontendModuleManager {
       loop {
         tokio::select! {
           packet = stream.recv() => if let Ok(packet) = packet {
-            debug!("Hello2");
             for module in modules.values() {
               module.lock().await.on_packet(packet.clone(), app.clone()).await;
             }
