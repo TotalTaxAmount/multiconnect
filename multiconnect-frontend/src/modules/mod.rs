@@ -12,6 +12,15 @@ use tokio::{sync::Mutex, time::interval};
 
 use crate::daemon::SharedDaemon;
 
+#[macro_export]
+macro_rules! get_manager_module {
+  ($m:expr, $t:ty) => {{
+    let tr = $m.get::<$t>().ok_or("Module not found")?;
+    let guard = tr.lock().await;
+    guard.as_any().downcast_ref::<$t>().ok_or("Downcast failed")
+  }};
+}
+
 #[async_trait]
 pub trait FrontendModule: Send + Sync + Any {
   async fn init(&mut self, app: AppHandle<Wry>);

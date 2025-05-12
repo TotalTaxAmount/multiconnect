@@ -2,7 +2,6 @@ mod controller;
 mod daemon;
 mod modules;
 
-
 use argh::FromArgs;
 use daemon::Daemon;
 use modules::FrontendModuleManager;
@@ -35,7 +34,7 @@ pub fn run(port: u16) {
           let daemon = Daemon::connect(&port).await.unwrap();
 
           let manager = FrontendModuleManager::new(daemon);
-          /// Initalize modules
+          // Initalize modules
           manager.init(handle.clone()).await;
 
           app.manage(manager);
