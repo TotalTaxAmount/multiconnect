@@ -1,7 +1,6 @@
 use std::{
   any::Any,
-  collections::{HashMap, VecDeque},
-  ops::Mul,
+  collections::HashMap,
   str::FromStr,
   sync::Arc,
 };
@@ -9,8 +8,8 @@ use std::{
 use async_trait::async_trait;
 use log::debug;
 use multiconnect_protocol::{local::peer::L2PeerPairRequest, Device, Packet};
-use tauri::{AppHandle, Emitter, State, Wry};
-use tokio::sync::{futures::Notified, Mutex, Notify};
+use tauri::{Emitter, State};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::with_manager_module;

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use multiconnect_protocol::Packet;
 use tauri::{AppHandle, Wry};
 use tokio::{
-  sync::{broadcast, mpsc, Mutex, MutexGuard},
+  sync::{broadcast, mpsc, Mutex},
   time::interval,
 };
 
