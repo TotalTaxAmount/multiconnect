@@ -106,8 +106,8 @@ impl Daemon {
   }
 
   /// Send a packet
-  pub async fn send_packet(&self, packet: Packet) {
-    let _ = self.outgoing_tx.send(packet).await;
+  pub fn sending_stream(&self) -> mpsc::Sender<Packet> {
+    self.outgoing_tx.clone()
   }
 
   /// Get a stream of incoming packets

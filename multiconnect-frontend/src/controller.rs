@@ -42,8 +42,8 @@ impl Controller {
     Self { daemon }
   }
 
-  /// Send a packet to the daemon
-  pub async fn send_packet(&self, packet: Packet) {
-    self.daemon.send_packet(packet).await;
-  }
+  // Send a packet to the daemon
+  // pub async fn send_packet(&self, packet: Packet) {
+  //   self.daemon.send_packet(packet).await;
+  // }
 }

@@ -1,3 +1,5 @@
+pub mod pairing;
+
 use std::{
   any::{Any, TypeId},
   collections::HashMap,
@@ -8,36 +10,65 @@ use std::{
 use async_trait::async_trait;
 use multiconnect_protocol::Packet;
 use tauri::{AppHandle, Wry};
-use tokio::{sync::Mutex, time::interval};
+use tokio::{
+  sync::{broadcast, mpsc, Mutex, MutexGuard},
+  time::interval,
+};
 
 use crate::daemon::SharedDaemon;
 
 #[macro_export]
-macro_rules! get_manager_module {
-  ($m:expr, $t:ty) => {{
-    let tr = $m.get::<$t>().ok_or("Module not found")?;
-    let guard = tr.lock().await;
-    guard.as_any().downcast_ref::<$t>().ok_or("Downcast failed")
+macro_rules! with_manager_module {
+  ($manager:expr, $t:ty, |$mod_var:ident, $ctx_var:ident| $body:block) => {{
+    let module_entry = $manager.get::<$t>().ok_or("Module not found")?;
+    let mut $mod_var = module_entry.lock().await;
+    let $mod_var = $mod_var.as_any_mut().downcast_mut::<$t>().ok_or("Downcast failed")?;
+
+    let ctx_lock = $manager.get_ctx().await;
+    let mut $ctx_var = ctx_lock.lock().await;
+
+    $body
   }};
+}
+
+pub struct FrontendCtx {
+  app: AppHandle<Wry>,
+  packet_tx: mpsc::Sender<Packet>,
+}
+
+impl FrontendCtx {
+  pub fn new(app: AppHandle<Wry>, packet_tx: mpsc::Sender<Packet>) -> Self {
+    Self { app, packet_tx }
+  }
+
+  pub async fn send_packet(&self, packet: Packet) {
+    let _ = self.packet_tx.send(packet).await;
+  }
 }
 
 #[async_trait]
 pub trait FrontendModule: Send + Sync + Any {
-  async fn init(&mut self, app: AppHandle<Wry>);
-  async fn on_packet(&mut self, packet: Packet, app: AppHandle<Wry>);
-  async fn periodic(&mut self, app: AppHandle<Wry>);
+  async fn init(&mut self, ctx: Arc<Mutex<FrontendCtx>>);
+  async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx);
+  async fn periodic(&mut self, ctx: &mut FrontendCtx);
 
+  fn as_any_mut(&mut self) -> &mut dyn Any;
   fn as_any(&self) -> &dyn Any;
 }
 
 pub struct FrontendModuleManager {
   modules: HashMap<TypeId, Arc<Mutex<dyn FrontendModule>>>,
-  daemon: SharedDaemon,
+  ctx: Arc<Mutex<FrontendCtx>>,
+  recv_packet_stream: broadcast::Receiver<Packet>,
 }
 
 impl FrontendModuleManager {
-  pub fn new(daemon: SharedDaemon) -> Self {
-    Self { modules: HashMap::new(), daemon }
+  pub fn new(daemon: SharedDaemon, app: AppHandle<Wry>) -> Self {
+    Self {
+      modules: HashMap::new(),
+      ctx: Arc::new(Mutex::new(FrontendCtx::new(app, daemon.sending_stream()))),
+      recv_packet_stream: daemon.packet_stream(),
+    }
   }
 
   pub fn register<T: FrontendModule>(&mut self, module: T) {
@@ -45,33 +76,38 @@ impl FrontendModuleManager {
     self.modules.insert(type_id, Arc::new(Mutex::new(module)));
   }
 
-  // TODO: it would be nice to be able to downcast this here and return a type T but alas
   pub fn get<T: FrontendModule + 'static>(&self) -> Option<&Arc<Mutex<dyn FrontendModule + 'static>>> {
     let id = TypeId::of::<T>();
     self.modules.get(&id)
   }
 
-  pub async fn init(&self, app: AppHandle<Wry>) {
+  pub async fn get_ctx(&self) -> Arc<Mutex<FrontendCtx>> {
+    self.ctx.clone()
+  }
+
+  pub async fn init(&self) {
     for module in self.modules.values() {
-      module.lock().await.init(app.clone()).await;
+      module.lock().await.init(self.ctx.clone()).await;
     }
 
-    let daemon = self.daemon.clone();
     let modules = self.modules.clone();
     let mut interval = interval(Duration::from_millis(20));
+    let mut ch = self.recv_packet_stream.resubscribe();
+    let ctx = self.ctx.clone();
 
     tokio::spawn(async move {
-      let mut stream = daemon.packet_stream();
       loop {
         tokio::select! {
-          packet = stream.recv() => if let Ok(packet) = packet {
+          packet = ch.recv() => if let Ok(packet) = packet {
+            let mut ctx = ctx.lock().await;
             for module in modules.values() {
-              module.lock().await.on_packet(packet.clone(), app.clone()).await;
+              module.lock().await.on_packet(packet.clone(), &mut ctx).await;
             }
           },
           _ = interval.tick() => {
+            let mut ctx = ctx.lock().await;
             for module in modules.values() {
-              module.lock().await.periodic(app.clone()).await;
+              module.lock().await.periodic(&mut ctx).await;
             }
           }
         }

@@ -4,7 +4,10 @@ mod modules;
 
 use argh::FromArgs;
 use daemon::Daemon;
-use modules::FrontendModuleManager;
+use modules::{
+  pairing::{self, PairingModule},
+  FrontendModuleManager,
+};
 use multiconnect_config::CONFIG;
 use tauri::{async_runtime, Manager};
 use tokio::task;
@@ -33,18 +36,16 @@ pub fn run(port: u16) {
         async_runtime::block_on(async {
           let daemon = Daemon::connect(&port).await.unwrap();
 
-          let manager = FrontendModuleManager::new(daemon);
+          let mut manager = FrontendModuleManager::new(daemon, handle.clone());
           // Initalize modules
-          manager.init(handle.clone()).await;
+          manager.register(PairingModule::new());
 
           app.manage(manager);
-          // let controller = Controller::new(daemon, handle.clone()).await;
-          // app.manage(controller)
         })
       });
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![set_theme, get_theme,])
+    .invoke_handler(tauri::generate_handler![set_theme, get_theme, pairing::send_pairing_request])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
