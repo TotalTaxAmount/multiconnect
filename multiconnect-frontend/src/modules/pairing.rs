@@ -1,9 +1,4 @@
-use std::{
-  any::Any,
-  collections::HashMap,
-  str::FromStr,
-  sync::Arc,
-};
+use std::{any::Any, collections::HashMap, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use log::debug;
@@ -39,18 +34,26 @@ impl FrontendModule for PairingModule {
   async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx) {
     match packet {
       Packet::L2PeerPairRequest(packet) => {
-        debug!("Recvivied pairing request packet");
+        debug!("Received pairing request packet");
         let device = bincode::deserialize::<Device>(&packet.device).unwrap();
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
         self.pending.insert(uuid, device.clone());
-        ctx.app.emit("pair-request", device).unwrap();
+        ctx.app.emit("peer-pair-request", device).unwrap();
       }
       Packet::L3PeerPairResponse(packet) => {
-        debug!("Recivied pairing response");
+        debug!("Received pairing response");
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
         if let Some(d) = self.pending.remove(&uuid) {
           let _ = ctx.app.emit("pair-response", (d, packet.accepted));
         }
+      }
+      Packet::L0PeerFound(packet) => {
+        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
+        debug!("Received peer found: device = {:?}", device);
+        let _ = ctx.app.emit("peer-found", device);
+      }
+      Packet::L1PeerExpired(packet) => {
+        let _ = ctx.app.emit("peer-expired", packet.peer_id);
       }
       _ => {}
     }
@@ -69,6 +72,7 @@ impl FrontendModule for PairingModule {
 
 #[tauri::command]
 pub async fn send_pairing_request(manager: State<'_, FrontendModuleManager>, target: Device) -> Result<(), &str> {
+  debug!("Received pairing request command from UI");
   with_manager_module!(manager, PairingModule, |m, ctx| {
     m.send_request(target, &mut ctx).await;
     Ok(())

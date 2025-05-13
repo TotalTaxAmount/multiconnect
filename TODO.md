@@ -15,6 +15,8 @@
 
 ## Desktop
 
+- Fix peer refresh (store a devices online status somewhere, ideally not in the saved peers json)
+
 ## Android
 
 - Android app

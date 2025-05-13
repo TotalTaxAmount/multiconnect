@@ -1,6 +1,7 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use bincode::de;
 use libp2p::{request_response::ResponseChannel, PeerId};
 use log::{debug, info, warn};
 use multiconnect_protocol::{
@@ -10,7 +11,7 @@ use multiconnect_protocol::{
   Device, Packet,
 };
 use tokio::{
-  sync::{mpsc, Mutex},
+  sync::{mpsc, Mutex, RwLock},
   time::{interval, Instant},
 };
 use uuid::Uuid;
@@ -28,28 +29,28 @@ use super::{MulticonnectCtx, MulticonnectModule};
 /// accept a inbound stream
 ///
 /// **Discovery**:
-///   - Peer is discovored on network via mDNS
-///   - Lexocgphicly decide which peer should send pairing protocl request
+///   - Peer is discoverd on network via mDNS
+///   - Lexicographically decide which peer should send pairing protocol request
 ///     containing a S1PeerMeta of itself
-///   - Other peer recivies S1PeerMeta and adds the device to it's discovred
+///   - Other peer receives S1PeerMeta and adds the device to it's discoverd
 ///     devices
 ///   - Other peer sends a response with a S1PeerMeta of itself
-///   - Sender adds other device to discovred devices
+///   - Sender adds other device to discoverd devices
 ///
 /// **Pairing**:
 ///  - *Sending*:
-///     - Recivies a L2PeerPairRequest from the frontend
-///     - Add the request to pending requets and send a P2PeerPairRequest to the
+///     - Receives a L2PeerPairRequest from the frontend
+///     - Add the request to pending requests and send a P2PeerPairRequest to the
 ///       target peer
-///     - Recvive a P3PeerPairResponse from a peer and match it to a request
-///     - If its accepted add it it to pairied peers (TODO: Also save to disk to
+///     - Receive a P3PeerPairResponse from a peer and match it to a request
+///     - If its accepted add it it to paired peers (TODO: Also save to disk to
 ///       auto pair later)
 ///     - Send result to frontend
 ///  - *Receiving*:
-///     - Recivie a P2PairRequest and add it to pending requests
+///     - Receive a P2PairRequest and add it to pending requests
 ///     - Send a L2PeerPairRequest to the frontend
 ///     - Get a response from the frontend (L3PeerPairResponse)
-///     - If accepted save to pairied peers (and write to disk)
+///     - If accepted save to paired peers (and write to disk)
 ///     - Send result to other peer
 pub struct PairingModule {
   /// Pending pair requests
@@ -58,7 +59,7 @@ pub struct PairingModule {
   res_channels: Arc<Mutex<HashMap<PeerId, (Instant, ResponseChannel<Packet>)>>>,
   /// A channel for sending network commands
   pairing_protocol_send: mpsc::Sender<NetworkCommand>,
-  /// A channel for reciving pairing protocol events
+  /// A channel for receiving pairing protocol events
   pairing_protocol_recv: Option<mpsc::Receiver<PairingProtocolEvent>>,
 }
 
@@ -81,8 +82,6 @@ impl MulticonnectModule for PairingModule {
   #[doc = " Runs every 20ms, used for background tasks/other stuff service is doing"]
   async fn periodic(&mut self, _ctx: &mut MulticonnectCtx) {}
 
-  /// No real peer to pper happens here, this is just for discovery (easy way to
-  /// pass msgs is to send packets from self on channel)
   #[doc = " Runs when the swarm recivies a packet from another peer"]
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
     match event {
@@ -110,7 +109,7 @@ impl MulticonnectModule for PairingModule {
       }
       NetworkEvent::ConnectionOpenRequest(peer_id) => {
         if let Some((_, paired)) = ctx.get_device(&peer_id) {
-          debug!("Recived connection request from {} (saved: {:?})", peer_id, paired);
+          debug!("Received connection request from {} (saved: {:?})", peer_id, paired);
           if Some(true) == *paired {
             ctx.approve_inbound_stream(peer_id).await;
           } else {
@@ -164,6 +163,12 @@ impl MulticonnectModule for PairingModule {
               .await;
           }
         }
+        Packet::L4Refresh(_) => {
+          let devices = ctx.get_devices().values();
+          for (device, _) in devices {
+            let _ = ctx.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(device))).await;
+          }
+        }
         _ => {}
       },
 
@@ -204,7 +209,6 @@ impl MulticonnectModule for PairingModule {
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                         guard.add_device(device);
 
-
                         debug!("[second] Sending meta to {}", peer_id);
                         let _ = pairing_protocol_send.send(NetworkCommand::SendPairingProtocolResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
 
@@ -234,6 +238,7 @@ impl MulticonnectModule for PairingModule {
                         let mut guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                         guard.add_device(device);
+
                       },
                       Packet::P3PeerPairResponse(packet) => {
                         info!("Received paring response: uuid = {}, accepted = {}", packet.req_uuid, packet.accepted);
@@ -244,7 +249,7 @@ impl MulticonnectModule for PairingModule {
                           if packet.accepted {
                             let device = bincode::deserialize::<Device>(&req.device).unwrap();
                             if let Some((_, paired)) = guard.get_device_mut(&device.peer) {
-                              info!("Sucessfully paired with: {}", device.peer);
+                              info!("Successfully paired with: {}", device.peer);
                               *paired = Some(true);
                               guard.save_store().await;
                             }
@@ -254,7 +259,7 @@ impl MulticonnectModule for PairingModule {
                         }
                       },
                       _ => {
-                        warn!("Unexpected packet recivied");
+                        warn!("Unexpected packet received");
                       },
                     }
                   },

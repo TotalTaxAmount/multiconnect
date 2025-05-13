@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { refreshPeers } from "$lib/commands";
+  import IconMdiPlus from "virtual:icons/mdi/plus";
+  import { refreshPeers, sendPairingRequest } from "$lib/commands";
   import { Device } from "$lib/types";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
@@ -29,6 +30,13 @@
             map.delete(event.payload);
             return new Map(map);
           });
+        }),
+      );
+
+      unsubs.push(
+        await listen<Device>("peer-pair-request", (event) => {
+          console.debug(`Pair request from ${event.payload}`);
+          // TODO: Do something?
         }),
       );
 
@@ -79,11 +87,12 @@
             Peer ID: {device.peer}
           </p>
 
-          <!-- Slot for actions like Pairing -->
           <div class="mt-4 flex justify-end">
             <button
               class="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
-              on:click={() => console.log("TODO: Pair", device.peer)}
+              on:click={async () => {
+                await sendPairingRequest(device);
+              }}
             >
               Pair
             </button>
@@ -92,4 +101,11 @@
       {/each}
     </div>
   {/if}
+
+  <div class="flex justify-center items-center h-20">
+    <button class="rounded-lg px-4 text-2xl text-gray-900 dark:text-gray-100"
+      >Add devices</button
+    >
+    <IconMdiPlus />
+  </div>
 </div>

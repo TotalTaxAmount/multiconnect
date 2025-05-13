@@ -1,5 +1,5 @@
 <script lang="ts">
-  import DeviceList from "$lib/componets/DeviceList.svelte";
+  import DeviceList from "$lib/components/DeviceList.svelte";
   import { theme } from "$lib/theme";
   import "../app.css";
 

@@ -1,4 +1,3 @@
-mod controller;
 mod daemon;
 mod modules;
 
@@ -40,6 +39,7 @@ pub fn run(port: u16) {
           // Initalize modules
           manager.register(PairingModule::new());
 
+          manager.init().await;
           app.manage(manager);
         })
       });

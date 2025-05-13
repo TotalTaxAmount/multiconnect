@@ -5,8 +5,8 @@ import type { Device } from "./types";
  * Send a paring request the daemon
  * @param peer The peer to pair with;
  */
-export async function sendPairingRequest(device: Device) {
-  await invoke('send_pairing_request', { device });
+export async function sendPairingRequest(target: Device) {
+  await invoke('send_pairing_request', { target });
 }
 
 /**
