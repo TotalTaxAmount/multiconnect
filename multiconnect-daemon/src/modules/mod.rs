@@ -2,9 +2,10 @@ pub mod pairing;
 pub mod store;
 
 use async_trait::async_trait;
+use bincode::de;
 use libp2p::PeerId;
 use log::{debug, error};
-use multiconnect_protocol::{Device, Packet};
+use multiconnect_protocol::{local::peer, Device, Packet, SavedDevice};
 use std::{collections::HashMap, sync::Arc};
 use store::Store;
 use tokio::{
@@ -30,10 +31,6 @@ pub enum Action {
 /// A module that can be used for features
 #[async_trait]
 pub trait MulticonnectModule: Send + Sync {
-  /// Runs every 20ms, used for background tasks/other stuff service is doing
-  async fn periodic(&mut self, ctx: &mut MulticonnectCtx);
-  /// Runs when the swarm recivies a packet from another peer
-  // async fn on_peer_packet(&mut self, packet: Packet, source: PeerId, ctx: &mut MulticonnectCtx);
   /// Runs when the daemon recives a packet from the frontend
   async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx);
   /// Runs when a peer is discovered
@@ -53,13 +50,21 @@ pub struct MulticonnectCtx {
   this_device: Device,
   /// Device store
   store: Store,
+  ///
+  devices: HashMap<PeerId, (SavedDevice, bool, bool)>,
 }
 
 impl MulticonnectCtx {
   /// Create a new instance of `MulticonnectCtx` <br />
   pub async fn new(send_packet_tx: mpsc::Sender<Action>, this_device: Device) -> Self {
     let store = Store::new().await;
-    Self { action_tx: send_packet_tx, this_device, store }
+    let mut map = HashMap::new();
+    let saved_devices = store.get_saved_devices();
+
+    for (id, device) in saved_devices {
+      map.insert(id.clone(), (device.clone(), false, false));
+    }
+    Self { action_tx: send_packet_tx, this_device, store, devices: map }
   }
 
   /// Send a packet to the frontend
@@ -84,32 +89,59 @@ impl MulticonnectCtx {
     let _ = self.action_tx.send(Action::CloseStream(peer_id)).await;
   }
 
-  pub async fn save_store(&self) {
+  pub async fn save_store(&mut self) {
+    for (peer_id, (device, _, _)) in &self.devices {
+      if let Some(saved) = self.store.get_device_mut(peer_id) {
+        *saved = device.clone();
+      } else {
+        self.store.save_device(*peer_id, device.clone());
+      }
+    }
+
+    let all_device_ids: Vec<PeerId> = self.store.get_saved_devices().keys().cloned().collect();
+    for peer_id in all_device_ids {
+      if !self.devices.contains_key(&peer_id) {
+        self.store.remove_device(&peer_id);
+      }
+    }
+
     self.store.save().await;
   }
 
   /// Get the HashMap of paired devices
-  pub fn get_devices(&self) -> &HashMap<PeerId, (Device, Option<bool>)> {
-    &self.store.get_saved_devices()
+  pub fn get_devices(&self) -> &HashMap<PeerId, (SavedDevice, bool, bool)> {
+    &self.devices
   }
 
   /// Get a paired device
-  pub fn get_device(&self, id: &PeerId) -> Option<&(Device, Option<bool>)> {
-    self.store.get_device(id)
-    // self.devices.get(id)
+  pub fn get_device(&self, id: &PeerId) -> Option<&(SavedDevice, bool, bool)> {
+    self.devices.get(id)
   }
 
-  pub fn get_device_mut(&mut self, id: &PeerId) -> Option<&mut (Device, Option<bool>)> {
-    self.store.get_device_mut(id)
+  pub fn is_pairied(&self, id: &PeerId) -> Option<bool> {
+    Some(self.devices.get(id)?.0.get_pairied())
   }
+
   /// Add a device to the list of paired devices
-  pub fn add_device(&mut self, device: Device) {
-    self.store.save_device(device.peer, device, None);
+  pub fn add_device(&mut self, device: SavedDevice) {
+    self.devices.insert(device.get_device().peer, (device, false, false));
+  }
+
+  pub fn update_last_seen(&mut self, peer_id: &PeerId, last_seen: u64) {
+    if let Some((d, _, _)) = self.devices.get_mut(peer_id) {
+      d.set_last_seen(last_seen);
+    }
+  }
+
+  pub fn update_pairied(&mut self, peer_id: &PeerId, paired: bool) {
+    if let Some((d, _, _)) = self.devices.get_mut(peer_id) {
+      d.set_paired(paired);
+    }
   }
 
   /// Remove a paired  device
-  pub fn remove_device(&mut self, id: &PeerId) -> Option<(Device, Option<bool>)> {
-    self.store.remove_device(id)
+  pub fn remove_device(&mut self, id: &PeerId) -> Option<(SavedDevice, bool, bool)> {
+    self.devices.remove(id)
   }
 
   pub fn device_exists(&self, id: &PeerId) -> bool {
@@ -161,7 +193,6 @@ impl ModuleManager {
 
   pub async fn start(&'static mut self) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = self.ctx.clone();
-    let mut periodic_interval = time::interval(Duration::from_millis(20));
 
     let daemon_clone = self.daemon.clone();
     let mut recv_frontend_packet_rx = self.daemon.recv_packet_channel();
@@ -207,12 +238,6 @@ impl ModuleManager {
                 Action::CloseStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::CloseStream(peer_id)); },
             };
           },
-          _ = periodic_interval.tick() => {
-            let mut ctx = ctx.lock().await;
-            for module in modules.iter_mut() {
-              module.periodic(&mut ctx).await;
-            }
-          }
         }
       }
     });

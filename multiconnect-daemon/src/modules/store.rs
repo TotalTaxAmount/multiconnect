@@ -7,12 +7,12 @@ use std::{
 use libp2p::PeerId;
 use log::error;
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::Device;
+use multiconnect_protocol::{Device, SavedDevice};
 
 const FILENAME: &str = "saved_devices.json";
 
 pub struct Store {
-  devices: HashMap<PeerId, (Device, Option<bool>)>,
+  devices: HashMap<PeerId, SavedDevice>,
 }
 
 impl Store {
@@ -20,7 +20,7 @@ impl Store {
     Self { devices: Self::load().await }
   }
 
-  async fn load() -> HashMap<PeerId, (Device, Option<bool>)> {
+  async fn load() -> HashMap<PeerId, SavedDevice> {
     let cfg = CONFIG.get().unwrap();
     let path = cfg.read().await.get_config_dir().join(FILENAME);
     if !path.exists() {
@@ -47,43 +47,31 @@ impl Store {
     let file = cfg.read().await.get_config_dir().join(FILENAME);
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(file).unwrap();
 
-    let filtered: HashMap<_, _> = self
-      .devices
-      .iter()
-      .filter_map(|(k, (d, p))| {
-        if p.is_some() {
-          Some((k.clone(), (d.clone(), p.clone())))
-        } else {
-          None
-        }
-      })
-      .collect();
-
-    let json = serde_json::to_string(&filtered).unwrap();
+    let json = serde_json::to_string(&self.devices).unwrap();
     file.write_all(&json.as_bytes()).unwrap();
   }
 
-  pub fn save_device(&mut self, peer_id: PeerId, device: Device, paired: Option<bool>) {
-    self.devices.insert(peer_id, (device, paired));
+  pub fn save_device(&mut self, peer_id: PeerId, device: SavedDevice) {
+    self.devices.insert(peer_id, device);
   }
 
-  pub fn get_saved_devices(&self) -> &HashMap<PeerId, (Device, Option<bool>)> {
+  pub fn get_saved_devices(&self) -> &HashMap<PeerId, SavedDevice> {
     &self.devices
   }
 
-  pub fn check_paired(&self, peer_id: PeerId) -> Option<&(Device, Option<bool>)> {
+  pub fn check_paired(&self, peer_id: PeerId) -> Option<&SavedDevice> {
     self.devices.get(&peer_id)
   }
 
-  pub fn get_device(&self, peer_id: &PeerId) -> Option<&(Device, Option<bool>)> {
+  pub fn get_device(&self, peer_id: &PeerId) -> Option<&SavedDevice> {
     self.devices.get(peer_id)
   }
 
-  pub fn get_device_mut(&mut self, peer_id: &PeerId) -> Option<&mut (Device, Option<bool>)> {
+  pub fn get_device_mut(&mut self, peer_id: &PeerId) -> Option<&mut SavedDevice> {
     self.devices.get_mut(peer_id)
   }
 
-  pub fn remove_device(&mut self, peer_id: &PeerId) -> Option<(Device, Option<bool>)> {
+  pub fn remove_device(&mut self, peer_id: &PeerId) -> Option<SavedDevice> {
     self.devices.remove(peer_id)
   }
 
@@ -91,9 +79,15 @@ impl Store {
     self.devices.contains_key(peer_id)
   }
 
-  pub fn set_paired(&mut self, peer_id: PeerId, paired: bool) {
-    if let Some((_, p)) = self.devices.get_mut(&peer_id) {
-      *p = Some(paired);
+  pub fn set_last_seen(&mut self, peer_id: &PeerId, last_seen: u64) {
+    if let Some(d) = self.get_device_mut(peer_id) {
+      d.set_last_seen(last_seen);
+    }
+  }
+
+  pub fn set_pairied(&mut self, peer_id: &PeerId, paired: bool) {
+    if let Some(d) = self.get_device_mut(peer_id) {
+      d.set_paired(paired);
     }
   }
 }

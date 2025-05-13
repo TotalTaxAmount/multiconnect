@@ -31,6 +31,16 @@ macro_rules! with_manager_module {
   }};
 }
 
+#[macro_export]
+macro_rules! with_ctx {
+  ($manager:expr, |$ctx_var:ident| $body:block) => {{
+    let ctx_lock = $manager.get_ctx().await;
+    let mut $ctx_var = ctx_lock.lock().await;
+
+    $body
+  }};
+}
+
 pub struct FrontendCtx {
   app: AppHandle<Wry>,
   packet_tx: mpsc::Sender<Packet>,
@@ -50,7 +60,6 @@ impl FrontendCtx {
 pub trait FrontendModule: Send + Sync + Any {
   async fn init(&mut self, ctx: Arc<Mutex<FrontendCtx>>);
   async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx);
-  async fn periodic(&mut self, ctx: &mut FrontendCtx);
 
   fn as_any_mut(&mut self) -> &mut dyn Any;
   fn as_any(&self) -> &dyn Any;
@@ -91,7 +100,6 @@ impl FrontendModuleManager {
     }
 
     let modules = self.modules.clone();
-    let mut interval = interval(Duration::from_millis(20));
     let mut ch = self.recv_packet_stream.resubscribe();
     let ctx = self.ctx.clone();
 
@@ -104,12 +112,6 @@ impl FrontendModuleManager {
               module.lock().await.on_packet(packet.clone(), &mut ctx).await;
             }
           },
-          _ = interval.tick() => {
-            let mut ctx = ctx.lock().await;
-            for module in modules.values() {
-              module.lock().await.periodic(&mut ctx).await;
-            }
-          }
         }
       }
     });

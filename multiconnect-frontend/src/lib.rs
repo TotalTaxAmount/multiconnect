@@ -45,7 +45,12 @@ pub fn run(port: u16) {
       });
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![set_theme, get_theme, pairing::send_pairing_request])
+    .invoke_handler(tauri::generate_handler![
+      set_theme,
+      get_theme,
+      pairing::send_pairing_request,
+      pairing::refresh_devices
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

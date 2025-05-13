@@ -1,10 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+  os::unix::raw::dev_t,
+  time::{SystemTime, UNIX_EPOCH},
+};
 
 use libp2p::PeerId;
 use uuid::Uuid;
 
 use crate::{
-  local::peer::{l7_saved_peer_status::SavedPeer, *},
+  local::peer::*,
   p2p::{peer::*, *},
   shared::peer::*,
   Device, Packet,
@@ -65,9 +68,16 @@ impl L3PeerPairResponse {
   }
 }
 
-impl L7SavedPeerStatus {
-  pub fn new(peers: Vec<SavedPeer>) -> Self {
-    Self { id: Packet::create_id(), peers }
+impl L7SavedDeviceStatus {
+  pub fn new(peer_id: PeerId, online: bool, paired: bool, device: &Device, last_seen: u64) -> Self {
+    Self {
+      id: Packet::create_id(),
+      peer_id: peer_id.to_string(),
+      online,
+      paired,
+      device: bincode::serialize(device).unwrap(),
+      last_seen,
+    }
   }
 }
 

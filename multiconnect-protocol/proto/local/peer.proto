@@ -45,25 +45,19 @@ message L4Refresh {
 }
 
 // Send status about a saved peer
-message L7SavedPeerStatus {
+message L7SavedDeviceStatus {
   // The id of the packet
   required uint32 id = 1;
-  // A list of saved peers
-  repeated SavedPeer peers = 2;
-
-  // Message about a saved peer
-  message SavedPeer {
-    // The peer id of the peer
-    required string peer_id = 1;
-    // If the peer is online or not
-    required bool online = 2;
-    // If the peer is paired or not
-    required bool paired = 3;
-    // The device info about the peer
-    required bytes device = 4;
-    // When it was last seen
-    required uint64 last_seen = 5;
-  }
+  // The peer id of the peer
+  required string peer_id = 2;
+  // If the peer is online or not
+  required bool online = 3;
+  // If the peer is paired or not
+  required bool paired = 4;
+  // The device info about the peer
+  required bytes device = 5;
+  // When it was last seen
+  required uint64 last_seen = 6;
 }
 
 // Update status of a single saved peer

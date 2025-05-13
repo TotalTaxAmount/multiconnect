@@ -2,12 +2,15 @@ use std::{any::Any, collections::HashMap, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use log::debug;
-use multiconnect_protocol::{local::peer::L2PeerPairRequest, Device, Packet};
+use multiconnect_protocol::{
+  local::peer::{L2PeerPairRequest, L4Refresh},
+  Device, Packet,
+};
 use tauri::{Emitter, State};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::with_manager_module;
+use crate::{with_ctx, with_manager_module};
 
 use super::{FrontendCtx, FrontendModule, FrontendModuleManager};
 
@@ -55,11 +58,13 @@ impl FrontendModule for PairingModule {
       Packet::L1PeerExpired(packet) => {
         let _ = ctx.app.emit("peer-expired", packet.peer_id);
       }
+      Packet::L7SavedDeviceStatus(packet) => {
+        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
+        let _ = ctx.app.emit("device-status", (device, packet.online, packet.last_seen, packet.paired));
+      }
       _ => {}
     }
   }
-
-  async fn periodic(&mut self, _ctx: &mut FrontendCtx) {}
 
   fn as_any_mut(&mut self) -> &mut dyn Any {
     self
@@ -75,6 +80,14 @@ pub async fn send_pairing_request(manager: State<'_, FrontendModuleManager>, tar
   debug!("Received pairing request command from UI");
   with_manager_module!(manager, PairingModule, |m, ctx| {
     m.send_request(target, &mut ctx).await;
+    Ok(())
+  })
+}
+
+#[tauri::command]
+pub async fn refresh_devices(manager: State<'_, FrontendModuleManager>) -> Result<(), &str> {
+  with_ctx!(manager, |ctx| {
+    ctx.send_packet(Packet::L4Refresh(L4Refresh::new())).await;
     Ok(())
   })
 }

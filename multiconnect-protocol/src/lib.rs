@@ -1,5 +1,7 @@
 pub mod impls;
 
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
 use generated::multiconnect::{
   local::peer::*,
   p2p::{peer::*, *},
@@ -35,15 +37,6 @@ impl From<std::io::Error> for PacketError {
   }
 }
 
-/// Peer struct, will have other field like device type and common name
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
-pub struct Peer {
-  /// The libp2p peer id for the peer
-  pub peer_id: PeerId,
-  /// The libp2p address for the peer
-  pub multiaddr: Multiaddr,
-}
-
 /// Device struct containing a peer and metadata about the device
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,13 +51,6 @@ pub struct Device {
   pub mc_version: String,
   /// The type of device
   pub device_type: DeviceType,
-}
-
-impl Peer {
-  /// Create a new peer
-  pub fn new(peer_id: PeerId, multiaddr: Multiaddr) -> Self {
-    Self { peer_id, multiaddr }
-  }
 }
 
 impl Device {
@@ -91,6 +77,39 @@ impl Device {
   }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SavedDevice {
+  device: Device,
+  pairied: bool,
+  last_seen: u64,
+}
+
+impl SavedDevice {
+  pub fn new(device: Device, pairied: bool) -> Self {
+    Self { device, pairied, last_seen: SystemTime::elapsed(&UNIX_EPOCH).unwrap().as_secs() }
+  }
+
+  pub fn get_device(&self) -> &Device {
+    &self.device
+  }
+
+  pub fn get_pairied(&self) -> bool {
+    self.pairied
+  }
+
+  pub fn last_seen(&self) -> u64 {
+    self.last_seen
+  }
+
+  pub fn set_last_seen(&mut self, last_seen: u64) {
+    self.last_seen = last_seen;
+  }
+
+  pub fn set_paired(&mut self, pairied: bool) {
+    self.pairied = pairied;
+  }
+}
+
 /// All the possible packet types
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -113,7 +132,7 @@ pub enum Packet {
   L3PeerPairResponse(L3PeerPairResponse),
   /// Refresh packet
   L4Refresh(L4Refresh),
-  L7SavedPeerStatus(L7SavedPeerStatus),
+  L7SavedDeviceStatus(L7SavedDeviceStatus),
   L8SavedPeerUpdate(L8SavedPeerUpdate),
   /// Get metadata about a peer
   S1PeerMeta(S1PeerMeta), /* TODO
@@ -163,7 +182,9 @@ impl Packet {
       6 => Ok(Packet::L2PeerPairRequest(L2PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       7 => Ok(Packet::L3PeerPairResponse(L3PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       8 => Ok(Packet::L4Refresh(L4Refresh::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
-      9 => Ok(Packet::L7SavedPeerStatus(L7SavedPeerStatus::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      9 => {
+        Ok(Packet::L7SavedDeviceStatus(L7SavedDeviceStatus::decode(data).map_err(|_| PacketError::MalformedPacket)?))
+      }
       10 => Ok(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       11 => Ok(Packet::S1PeerMeta(S1PeerMeta::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
 
@@ -193,7 +214,7 @@ impl Packet {
       Packet::L2PeerPairRequest(peer_pair_request)    => encode_packet(buf, 6, peer_pair_request)?,
       Packet::L3PeerPairResponse(peer_pair_response) => encode_packet(buf, 7, peer_pair_response)?,
       Packet::L4Refresh(refresh)                              => encode_packet(buf, 8, refresh)?,
-      Packet::L7SavedPeerStatus(status)               => encode_packet(buf, 9, status)?,
+      Packet::L7SavedDeviceStatus(status)               => encode_packet(buf, 9, status)?,
       Packet::L8SavedPeerUpdate(update)               => encode_packet(buf, 10, update)?,
       // Shared (daemon + client and p2p) packets
       Packet::S1PeerMeta(peer_meta)                          => encode_packet(buf, 11, peer_meta)?,

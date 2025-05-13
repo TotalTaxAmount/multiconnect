@@ -22,8 +22,8 @@ export async function sendPairingResponse(accepted: boolean, req_uuid: string) {
 /**
  * Refresh peers
  */
-export async function refreshPeers() {
-  await invoke('refresh_peers');
+export async function refreshDevices() {
+  await invoke('refresh_devices');
 }
 
 export async function getTheme(): Promise<string> {

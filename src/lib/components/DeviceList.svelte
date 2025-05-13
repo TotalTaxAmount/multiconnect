@@ -1,46 +1,18 @@
 <script lang="ts">
-  import IconMdiPlus from "virtual:icons/mdi/plus";
-  import { refreshPeers, sendPairingRequest } from "$lib/commands";
+  import { refreshDevices, sendPairingRequest } from "$lib/commands";
   import { Device } from "$lib/types";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { writable } from "svelte/store";
 
-  const peers = writable<Map<string, Device>>(new Map());
+  const devices = writable<Map<string, Device>>(new Map());
+  const isPairingScreenVisible = writable(false);
 
   onMount(() => {
     const unsubs: (() => void)[] = [];
 
     const setup = async () => {
-      unsubs.push(
-        await listen<Device>("peer-found", (event) => {
-          const device = event.payload;
-          console.debug(`Device: ${device.deviceName}`);
-          peers.update((map) => {
-            map.set(device.peer, device);
-            return new Map(map);
-          });
-        }),
-      );
-
-      unsubs.push(
-        await listen<string>("peer-expired", (event) => {
-          console.debug(`Device: ${event.payload}`);
-          peers.update((map) => {
-            map.delete(event.payload);
-            return new Map(map);
-          });
-        }),
-      );
-
-      unsubs.push(
-        await listen<Device>("peer-pair-request", (event) => {
-          console.debug(`Pair request from ${event.payload}`);
-          // TODO: Do something?
-        }),
-      );
-
-      await refreshPeers();
+      await refreshDevices();
     };
 
     setup();
@@ -49,20 +21,24 @@
       unsubs.forEach((unsub) => unsub());
     };
   });
+
+  const togglePairingScreen = () => {
+    isPairingScreenVisible.update((prev) => !prev);
+  };
 </script>
 
 <div class="p-6 space-y-6">
-  <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100">
-    Devices Nearby
+  <h2 class="text-center text-3xl font-bold text-gray-900 dark:text-gray-100">
+    Pairied Devices
   </h2>
 
-  {#if $peers.size === 0}
-    <p class="text-gray-500 dark:text-gray-400 italic">
-      No devices discovered.
+  {#if $devices.size === 0}
+    <p class="text-center text-gray-500 dark:text-gray-400 italic">
+      Pair some devies to get started
     </p>
   {:else}
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-      {#each Array.from($peers.values()) as device (device.peer)}
+      {#each Array.from($devices.values()) as device (device.peer)}
         <div
           class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow"
         >
@@ -101,11 +77,4 @@
       {/each}
     </div>
   {/if}
-
-  <div class="flex justify-center items-center h-20">
-    <button class="rounded-lg px-4 text-2xl text-gray-900 dark:text-gray-100"
-      >Add devices</button
-    >
-    <IconMdiPlus />
-  </div>
 </div>
