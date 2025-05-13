@@ -68,7 +68,7 @@ impl L3PeerPairResponse {
   }
 }
 
-impl L7SavedDeviceStatus {
+impl L7DeviceStatus {
   pub fn new(peer_id: PeerId, online: bool, paired: bool, device: &Device, last_seen: u64) -> Self {
     Self {
       id: Packet::create_id(),

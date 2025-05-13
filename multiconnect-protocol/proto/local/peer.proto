@@ -45,7 +45,7 @@ message L4Refresh {
 }
 
 // Send status about a saved peer
-message L7SavedDeviceStatus {
+message L7DeviceStatus {
   // The id of the packet
   required uint32 id = 1;
   // The peer id of the peer

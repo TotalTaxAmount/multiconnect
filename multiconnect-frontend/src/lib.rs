@@ -49,7 +49,7 @@ pub fn run(port: u16) {
       set_theme,
       get_theme,
       pairing::send_pairing_request,
-      pairing::refresh_devices
+      pairing::refresh_devices,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

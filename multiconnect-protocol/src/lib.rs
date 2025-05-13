@@ -132,7 +132,7 @@ pub enum Packet {
   L3PeerPairResponse(L3PeerPairResponse),
   /// Refresh packet
   L4Refresh(L4Refresh),
-  L7SavedDeviceStatus(L7SavedDeviceStatus),
+  L7DeviceStatus(L7DeviceStatus),
   L8SavedPeerUpdate(L8SavedPeerUpdate),
   /// Get metadata about a peer
   S1PeerMeta(S1PeerMeta), /* TODO
@@ -182,9 +182,7 @@ impl Packet {
       6 => Ok(Packet::L2PeerPairRequest(L2PeerPairRequest::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       7 => Ok(Packet::L3PeerPairResponse(L3PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       8 => Ok(Packet::L4Refresh(L4Refresh::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
-      9 => {
-        Ok(Packet::L7SavedDeviceStatus(L7SavedDeviceStatus::decode(data).map_err(|_| PacketError::MalformedPacket)?))
-      }
+      9 => Ok(Packet::L7DeviceStatus(L7DeviceStatus::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       10 => Ok(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       11 => Ok(Packet::S1PeerMeta(S1PeerMeta::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
 
@@ -214,7 +212,7 @@ impl Packet {
       Packet::L2PeerPairRequest(peer_pair_request)    => encode_packet(buf, 6, peer_pair_request)?,
       Packet::L3PeerPairResponse(peer_pair_response) => encode_packet(buf, 7, peer_pair_response)?,
       Packet::L4Refresh(refresh)                              => encode_packet(buf, 8, refresh)?,
-      Packet::L7SavedDeviceStatus(status)               => encode_packet(buf, 9, status)?,
+      Packet::L7DeviceStatus(status)               => encode_packet(buf, 9, status)?,
       Packet::L8SavedPeerUpdate(update)               => encode_packet(buf, 10, update)?,
       // Shared (daemon + client and p2p) packets
       Packet::S1PeerMeta(peer_meta)                          => encode_packet(buf, 11, peer_meta)?,

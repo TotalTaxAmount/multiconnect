@@ -124,7 +124,7 @@ impl MulticonnectCtx {
 
   /// Add a device to the list of paired devices
   pub fn add_device(&mut self, device: SavedDevice) {
-    self.devices.insert(device.get_device().peer, (device, false, false));
+    self.devices.insert(device.get_device().peer, (device, true, false));
   }
 
   pub fn update_last_seen(&mut self, peer_id: &PeerId, last_seen: u64) {
@@ -145,7 +145,7 @@ impl MulticonnectCtx {
   }
 
   pub fn device_exists(&self, id: &PeerId) -> bool {
-    self.store.contains_device(id)
+    self.devices.contains_key(id)
   }
 
   /// Get the local peer id

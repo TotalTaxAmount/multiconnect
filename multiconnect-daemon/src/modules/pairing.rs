@@ -5,9 +5,7 @@ use bincode::de;
 use libp2p::{request_response::ResponseChannel, PeerId};
 use log::{debug, info, warn};
 use multiconnect_protocol::{
-  local::peer::{
-    L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L7SavedDeviceStatus, L8SavedPeerUpdate,
-  },
+  local::peer::{L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L7DeviceStatus, L8SavedPeerUpdate},
   p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   shared::peer::S1PeerMeta,
   Device, Packet, SavedDevice,
@@ -166,7 +164,7 @@ impl MulticonnectModule for PairingModule {
           let devices = ctx.get_devices().values();
           for (device, online, _connected) in devices {
             ctx
-              .send_to_frontend(Packet::L7SavedDeviceStatus(L7SavedDeviceStatus::new(
+              .send_to_frontend(Packet::L7DeviceStatus(L7DeviceStatus::new(
                 device.get_device().peer,
                 *online,
                 device.get_pairied(),
@@ -178,7 +176,6 @@ impl MulticonnectModule for PairingModule {
         }
         _ => {}
       },
-
       FrontendEvent::Connected => {}
       _ => {}
     }

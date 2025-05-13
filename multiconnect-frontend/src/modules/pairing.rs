@@ -58,9 +58,14 @@ impl FrontendModule for PairingModule {
       Packet::L1PeerExpired(packet) => {
         let _ = ctx.app.emit("peer-expired", packet.peer_id);
       }
-      Packet::L7SavedDeviceStatus(packet) => {
+      Packet::L7DeviceStatus(packet) => {
         let device = bincode::deserialize::<Device>(&packet.device).unwrap();
-        let _ = ctx.app.emit("device-status", (device, packet.online, packet.last_seen, packet.paired));
+
+        if packet.paired {
+          let _ = ctx.app.emit("device-status", (device, packet.online, packet.last_seen, packet.paired));
+        } else {
+          let _ = ctx.app.emit("peer-found", device);
+        }
       }
       _ => {}
     }
