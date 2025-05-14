@@ -2,7 +2,7 @@ use std::{any::Any, collections::HashMap, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use libp2p_core::PeerId;
-use log::debug;
+use log::{debug, error};
 use multiconnect_protocol::{
   local::peer::{L2PeerPairRequest, L3PeerPairResponse, L4Refresh},
   Device, Packet,
@@ -25,16 +25,22 @@ impl PairingModule {
     Self { pending: HashMap::new(), devices: HashMap::new() }
   }
 
-  pub async fn send_request(&mut self, target: Device, ctx: &mut FrontendCtx) -> Uuid {
-    let uuid = Uuid::new_v4();
-    self.pending.insert(uuid, target.clone());
-    ctx.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&target, uuid))).await;
-    uuid
+  pub async fn send_request(&mut self, target: Device, ctx: &mut FrontendCtx) -> Option<Uuid> {
+    if !self.devices.contains_key(&target.peer) {
+      let uuid = Uuid::new_v4();
+      self.pending.insert(uuid, target.clone());
+      ctx.send_packet(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&target, uuid))).await;
+      return Some(uuid);
+    }
+    None
   }
 
   pub async fn send_response(&mut self, uuid: Uuid, accepted: bool, ctx: &mut FrontendCtx) {
-    if let Some(_device) = self.pending.remove(&uuid) {
+    if let Some(source) = self.pending.remove(&uuid) {
       debug!("Sending pairing response: uuid = {}, accepted = {}", uuid, accepted);
+      if accepted {
+        let _ = ctx.app.emit("peer-expired", source.peer); // Clear device from discovred devices
+      }
       ctx.send_packet(Packet::L3PeerPairResponse(L3PeerPairResponse::new(accepted, uuid))).await;
     }
   }
@@ -48,22 +54,27 @@ impl FrontendModule for PairingModule {
     match packet {
       Packet::L2PeerPairRequest(packet) => {
         debug!("Received pairing request packet");
-        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
+        let source = bincode::deserialize::<Device>(&packet.device).unwrap();
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-        self.pending.insert(uuid, device.clone());
-        ctx.app.emit("peer-pair-request", (device, uuid.to_string())).unwrap();
+        self.pending.insert(uuid, source.clone());
+        ctx.app.emit("peer-pair-request", (source, uuid.to_string())).unwrap();
       }
       Packet::L3PeerPairResponse(packet) => {
         debug!("Received pairing response");
         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-        if let Some(d) = self.pending.remove(&uuid) {
+        if let Some(_source) = self.pending.remove(&uuid) {
+          // if packet.accepted {
+          //   let _ = ctx.app.emit("peer-expired", source.peer);
+          // }
           let _ = ctx.app.emit("pair-response", (packet.req_uuid, packet.accepted));
         }
       }
       Packet::L0PeerFound(packet) => {
         let device = bincode::deserialize::<Device>(&packet.device).unwrap();
         debug!("Received peer found: device = {:?}", device);
-        let _ = ctx.app.emit("peer-found", device);
+        if let Err(e) = ctx.app.emit("peer-found", device) {
+          error!("Failed to emit: {}", e);
+        }
       }
       Packet::L1PeerExpired(packet) => {
         let _ = ctx.app.emit("peer-expired", packet.peer_id);
@@ -117,8 +128,11 @@ impl FrontendModule for PairingModule {
 pub async fn send_pairing_request(manager: State<'_, FrontendModuleManager>, target: Device) -> Result<String, &str> {
   debug!("Received pairing request command from UI");
   with_manager_module!(manager, PairingModule, |m, ctx| {
-    let uuid = m.send_request(target, &mut ctx).await;
-    Ok(uuid.to_string())
+    if let Some(uuid) = m.send_request(target, &mut ctx).await {
+      return Ok(uuid.to_string());
+    }
+    Err("Already paired")
+    // Ok(uuid.unwrap().to_string())
   })
 }
 
@@ -132,7 +146,6 @@ pub async fn send_pairing_response(
 
   with_manager_module!(manager, PairingModule, |m, ctx| {
     m.send_response(uuid, accepted, &mut ctx).await;
-
     Ok(())
   })
 }

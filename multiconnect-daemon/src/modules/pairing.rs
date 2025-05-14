@@ -98,6 +98,9 @@ impl MulticonnectModule for PairingModule {
       NetworkEvent::PeerDiscoverd(peer_id) => {
         if ctx.device_exists(&peer_id) {
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
+          if ctx.this_device.peer > peer_id {
+            ctx.open_stream(peer_id).await;
+          }
         } else {
           if ctx.this_device.peer > peer_id {
             debug!("[first] Sending metadata to {}", peer_id);
@@ -113,7 +116,7 @@ impl MulticonnectModule for PairingModule {
       }
       NetworkEvent::ConnectionOpenRequest(peer_id) => {
         if let Some(paired) = ctx.is_paired(&peer_id) {
-          debug!("Received connection request from {} (saved: {:?})", peer_id, paired);
+          debug!("Received connection request from {} (paired: {:?})", peer_id, paired);
           if paired {
             ctx.approve_inbound_stream(peer_id).await;
           } else {
@@ -129,18 +132,27 @@ impl MulticonnectModule for PairingModule {
   async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) {
     match event {
       FrontendEvent::RecvPacket(packet) => match packet {
+        // This happens on the reciviers system
         Packet::L3PeerPairResponse(packet) => {
           let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
           debug!("Received response for: {}", uuid);
           let mut pending_requests = self.pending_requests.lock().await;
           // Check if there is a pending request for that id
-          if let Some((_, Packet::P2PeerPairRequest(req), source)) = pending_requests.remove(&uuid) {
+          if let Some((_, Packet::P2PeerPairRequest(_req), source)) = pending_requests.remove(&uuid) {
             if let Some((_, ch)) = self.res_channels.lock().await.remove(&source) {
-              let device = bincode::deserialize::<Device>(&req.device).unwrap();
+              // let device = bincode::deserialize::<Device>(&req.device).unwrap(); // <- The target
 
-              info!("Saving paired device");
-              self.discovered_devices.lock().await.remove(&device.peer);
-              ctx.add_device(SavedDevice::new(device, true));
+              if packet.accepted {
+                info!("Saving paired device");
+                if let Some(source_device) = self.discovered_devices.lock().await.remove(&source) {
+                  ctx.add_device(SavedDevice::new(source_device, true));
+                  ctx.save_store().await;
+                }
+
+                debug!("Attempting to open stream");
+                ctx.open_stream(source).await;
+              }
+
               debug!("Sending back response");
               // Send the response
               let _ = self
@@ -154,26 +166,31 @@ impl MulticonnectModule for PairingModule {
               warn!("Failed to find response channel for request");
             }
           } else {
-            warn!("Invalid request uuid: pending = {:?}", `pending_requests`);
+            warn!("Invalid request uuid: pending = {:?}", pending_requests);
           }
         }
         Packet::L2PeerPairRequest(packet) => {
-          let device: Device = bincode::deserialize::<Device>(&packet.device).unwrap();
-          if self.discovered_devices.lock().await.contains_key(&device.peer) {
-            debug!("Sending pair request to: {}, id = {}", device.peer, packet.req_uuid);
-            let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+          let target: Device = bincode::deserialize::<Device>(&packet.device).unwrap();
+          let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+
+          if self.discovered_devices.lock().await.contains_key(&target.peer) && !ctx.device_exists(&target.peer) {
+            debug!("Sending pair request to: {}, id = {}", target.peer, packet.req_uuid);
             self
               .pending_requests
               .lock()
               .await
+              //      Request uuid | Timestamp | request packet | source
               .insert(uuid, (Instant::now(), Packet::L2PeerPairRequest(packet.clone()), ctx.get_this_device().peer));
             let _ = self
               .pairing_protocol_send
               .send(NetworkCommand::SendPairingProtocolRequest(
-                device.peer,
-                Packet::P2PeerPairRequest(P2PeerPairRequest::new(&device, uuid)),
+                target.peer,
+                Packet::P2PeerPairRequest(P2PeerPairRequest::new(&target, uuid)),
               ))
               .await;
+          } else {
+            debug!("Devices already pairied or doesnt exist");
+            let _ = ctx.send_to_frontend(Packet::L3PeerPairResponse(L3PeerPairResponse::new(false, uuid)));
           }
         }
         Packet::L4Refresh(_) => {
@@ -208,15 +225,15 @@ impl MulticonnectModule for PairingModule {
       let res_channels = self.res_channels.clone();
       let mut retain_interval = interval(Duration::from_secs(10));
 
-      {
-        let guard = ctx.lock().await;
-        let devices = guard.get_devices();
-        for (peer_id, (d, _, _)) in devices.iter() {
-          if d.get_paired() && guard.get_this_device().peer > *peer_id {
-            let _ = pairing_protocol_send.send(NetworkCommand::OpenStream(*peer_id)).await;
-          }
-        }
-      }
+      // {
+      //   let guard = ctx.lock().await;
+      //   let devices = guard.get_devices();
+      //   for (peer_id, (d, _, _)) in devices.iter() {
+      //     if d.get_paired() && guard.get_this_device().peer > *peer_id {
+      //       let _ = pairing_protocol_send.send(NetworkCommand::OpenStream(*peer_id)).await;
+      //     }
+      //   }
+      // }
 
       tokio::spawn(async move {
         loop {
@@ -238,18 +255,20 @@ impl MulticonnectModule for PairingModule {
                         let _ = pairing_protocol_send.send(NetworkCommand::SendPairingProtocolResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
 
                       },
+                      // This happens on the reciviers system
                       Packet::P2PeerPairRequest(packet) => {
                         info!("Received pairing request from {}, req_id = {}", peer_id, packet.req_uuid);
 
                         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-                        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
+                        let source = bincode::deserialize::<Device>(&packet.device).unwrap();
+                        // if let Some(device) = discovered_devices.lock().await.get(&peer_id) {}
 
                         pending_requests.lock().await.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(packet.clone()), peer_id));
                         debug!("Pending: {:?}", pending_requests.lock().await);
                         res_channels.lock().await.insert(peer_id, (Instant::now(), response_channel));
 
                         let guard = ctx.lock().await;
-                        guard.send_to_frontend(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid))).await;
+                        guard.send_to_frontend(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&source, uuid))).await;
                       },
                       _ => {
                         warn!("Unexpected packet received");
@@ -265,13 +284,16 @@ impl MulticonnectModule for PairingModule {
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                         let mut discovered_devices = discovered_devices.lock().await;
                         discovered_devices.insert(device.peer, device);
-                        // guard.add_device(SavedDevice::new(device, false));
 
                       },
+                      // This happens on the initators system
                       Packet::P3PeerPairResponse(packet) => {
                         info!("Received paring response: uuid = {}, accepted = {}", packet.req_uuid, packet.accepted);
                         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-                        if let Some((_, Packet::L2PeerPairRequest(req), _)) = pending_requests.lock().await.remove(&uuid) {
+                        debug!("Why");
+                        let mut pending_requests = pending_requests.lock().await;
+                        debug!("No RC pls");
+                        if let Some((_, Packet::L2PeerPairRequest(req), _)) = pending_requests.remove(&uuid) {
                           debug!("Found request for response");
                           let mut guard = ctx.lock().await;
                           if packet.accepted {
@@ -279,11 +301,16 @@ impl MulticonnectModule for PairingModule {
                             info!("Successfully paired with: {}", device.peer);
 
                             discovered_devices.lock().await.remove(&device.peer);
-                            guard.add_device(SavedDevice::new(device, true));
+                            guard.add_device(SavedDevice::new(device.clone(), true));
                             guard.save_store().await;
+
+                            debug!("Attempting to open stream");
+                            guard.open_stream(device.peer).await;
                           }
 
                           guard.send_to_frontend(Packet::L3PeerPairResponse(L3PeerPairResponse::new(packet.accepted, uuid))).await;
+                        } else {
+                          warn!("Could not find a request with uuid = {}, pending = {:?}", uuid, pending_requests);
                         }
                       },
                       _ => {
@@ -295,8 +322,8 @@ impl MulticonnectModule for PairingModule {
             },
 
             _ = retain_interval.tick() => {
-              pending_requests.lock().await.retain(|_, (instant, _, _)| instant.elapsed().as_secs() > 60);
-              res_channels.lock().await.retain(|_, (instant, _)| instant.elapsed().as_secs() > 30);
+              pending_requests.lock().await.retain(|_, (instant, _, _)| instant.elapsed().as_secs() < 60);
+              res_channels.lock().await.retain(|_, (instant, _)| instant.elapsed().as_secs() < 30);
             }
           }
         }

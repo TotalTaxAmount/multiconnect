@@ -13,4 +13,8 @@
   });
 </script>
 
-{@render children()}
+<main
+  class="bg-white min-h-screen text-black p-8 dark:bg-gray-800 dark:text-white"
+>
+  {@render children()}
+</main>

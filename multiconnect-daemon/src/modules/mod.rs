@@ -71,6 +71,10 @@ impl MulticonnectCtx {
     let _ = self.action_tx.send(Action::SendPeer(target, packet)).await;
   }
 
+  pub async fn open_stream(&self, peer_id: PeerId) {
+    let _ = self.action_tx.send(Action::OpenStream(peer_id)).await;
+  }
+
   pub async fn approve_inbound_stream(&self, peer_id: PeerId) {
     let _ = self.action_tx.send(Action::ApproveStream(peer_id)).await;
   }
