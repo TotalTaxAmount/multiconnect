@@ -154,7 +154,7 @@ impl MulticonnectModule for PairingModule {
               warn!("Failed to find response channel for request");
             }
           } else {
-            warn!("Invalid request uuid: pending: {:?}", pending_requests);
+            warn!("Invalid request uuid: pending = {:?}", `pending_requests`);
           }
         }
         Packet::L2PeerPairRequest(packet) => {
@@ -245,6 +245,7 @@ impl MulticonnectModule for PairingModule {
                         let device = bincode::deserialize::<Device>(&packet.device).unwrap();
 
                         pending_requests.lock().await.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(packet.clone()), peer_id));
+                        debug!("Pending: {:?}", pending_requests.lock().await);
                         res_channels.lock().await.insert(peer_id, (Instant::now(), response_channel));
 
                         let guard = ctx.lock().await;
