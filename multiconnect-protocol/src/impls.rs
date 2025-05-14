@@ -1,7 +1,4 @@
-use std::{
-  os::unix::raw::dev_t,
-  time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use libp2p::PeerId;
 use uuid::Uuid;
@@ -69,19 +66,18 @@ impl L3PeerPairResponse {
 }
 
 impl L7DeviceStatus {
-  pub fn new(peer_id: PeerId, online: bool, paired: bool, device: &Device, last_seen: u64) -> Self {
+  pub fn new(peer_id: PeerId, online: bool, device: &Device, last_seen: u64) -> Self {
     Self {
       id: Packet::create_id(),
       peer_id: peer_id.to_string(),
       online,
-      paired,
       device: bincode::serialize(device).unwrap(),
       last_seen,
     }
   }
 }
 
-impl L8SavedPeerUpdate {
+impl L8DeviceStatusUpdate {
   pub fn new(
     peer_id: &PeerId,
     device: Option<&Device>,

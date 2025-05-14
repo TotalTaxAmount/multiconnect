@@ -4,28 +4,24 @@ use std::{
   any::{Any, TypeId},
   collections::HashMap,
   sync::Arc,
-  time::Duration,
 };
 
 use async_trait::async_trait;
 use multiconnect_protocol::Packet;
 use tauri::{AppHandle, Wry};
-use tokio::{
-  sync::{broadcast, mpsc, Mutex},
-  time::interval,
-};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::daemon::SharedDaemon;
 
 #[macro_export]
 macro_rules! with_manager_module {
   ($manager:expr, $t:ty, |$mod_var:ident, $ctx_var:ident| $body:block) => {{
-    let module_entry = $manager.get::<$t>().ok_or("Module not found")?;
-    let mut $mod_var = module_entry.lock().await;
+    let _module_entry = $manager.get::<$t>().ok_or("Module not found")?;
+    let mut $mod_var = _module_entry.lock().await;
     let $mod_var = $mod_var.as_any_mut().downcast_mut::<$t>().ok_or("Downcast failed")?;
 
-    let ctx_lock = $manager.get_ctx().await;
-    let mut $ctx_var = ctx_lock.lock().await;
+    let _ctx = $manager.get_ctx().await;
+    let mut $ctx_var = _ctx.lock().await;
 
     $body
   }};
@@ -34,8 +30,8 @@ macro_rules! with_manager_module {
 #[macro_export]
 macro_rules! with_ctx {
   ($manager:expr, |$ctx_var:ident| $body:block) => {{
-    let ctx_lock = $manager.get_ctx().await;
-    let mut $ctx_var = ctx_lock.lock().await;
+    let _ctx = $manager.get_ctx().await;
+    let $ctx_var = _ctx.lock().await;
 
     $body
   }};

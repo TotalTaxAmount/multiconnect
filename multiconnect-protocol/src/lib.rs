@@ -1,6 +1,6 @@
 pub mod impls;
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use generated::multiconnect::{
   local::peer::*,
@@ -8,7 +8,7 @@ use generated::multiconnect::{
   shared::peer::*,
 };
 
-use libp2p::{Multiaddr, PeerId};
+use libp2p::PeerId;
 use log::{error, trace};
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -80,21 +80,21 @@ impl Device {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SavedDevice {
   device: Device,
-  pairied: bool,
+  paired: bool,
   last_seen: u64,
 }
 
 impl SavedDevice {
-  pub fn new(device: Device, pairied: bool) -> Self {
-    Self { device, pairied, last_seen: SystemTime::elapsed(&UNIX_EPOCH).unwrap().as_secs() }
+  pub fn new(device: Device, paired: bool) -> Self {
+    Self { device, paired, last_seen: SystemTime::elapsed(&UNIX_EPOCH).unwrap().as_secs() }
   }
 
   pub fn get_device(&self) -> &Device {
     &self.device
   }
 
-  pub fn get_pairied(&self) -> bool {
-    self.pairied
+  pub fn get_paired(&self) -> bool {
+    self.paired
   }
 
   pub fn last_seen(&self) -> u64 {
@@ -105,8 +105,8 @@ impl SavedDevice {
     self.last_seen = last_seen;
   }
 
-  pub fn set_paired(&mut self, pairied: bool) {
-    self.pairied = pairied;
+  pub fn set_paired(&mut self, paired: bool) {
+    self.paired = paired;
   }
 }
 
@@ -133,7 +133,7 @@ pub enum Packet {
   /// Refresh packet
   L4Refresh(L4Refresh),
   L7DeviceStatus(L7DeviceStatus),
-  L8SavedPeerUpdate(L8SavedPeerUpdate),
+  L8DeviceStatusUpdate(L8DeviceStatusUpdate),
   /// Get metadata about a peer
   S1PeerMeta(S1PeerMeta), /* TODO
                            * TransferStart(TransferStart),
@@ -183,7 +183,9 @@ impl Packet {
       7 => Ok(Packet::L3PeerPairResponse(L3PeerPairResponse::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       8 => Ok(Packet::L4Refresh(L4Refresh::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
       9 => Ok(Packet::L7DeviceStatus(L7DeviceStatus::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
-      10 => Ok(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
+      10 => {
+        Ok(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::decode(data).map_err(|_| PacketError::MalformedPacket)?))
+      }
       11 => Ok(Packet::S1PeerMeta(S1PeerMeta::decode(data).map_err(|_| PacketError::MalformedPacket)?)),
 
       _ => {
@@ -213,7 +215,7 @@ impl Packet {
       Packet::L3PeerPairResponse(peer_pair_response) => encode_packet(buf, 7, peer_pair_response)?,
       Packet::L4Refresh(refresh)                              => encode_packet(buf, 8, refresh)?,
       Packet::L7DeviceStatus(status)               => encode_packet(buf, 9, status)?,
-      Packet::L8SavedPeerUpdate(update)               => encode_packet(buf, 10, update)?,
+      Packet::L8DeviceStatusUpdate(update)               => encode_packet(buf, 10, update)?,
       // Shared (daemon + client and p2p) packets
       Packet::S1PeerMeta(peer_meta)                          => encode_packet(buf, 11, peer_meta)?,
       // Packet::TransferStart(transfer_start) => encode_packet(&mut buf, 6, transfer_start)?,

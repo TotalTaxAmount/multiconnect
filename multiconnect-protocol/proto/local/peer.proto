@@ -52,16 +52,14 @@ message L7DeviceStatus {
   required string peer_id = 2;
   // If the peer is online or not
   required bool online = 3;
-  // If the peer is paired or not
-  required bool paired = 4;
   // The device info about the peer
-  required bytes device = 5;
+  required bytes device = 4;
   // When it was last seen
-  required uint64 last_seen = 6;
+  required uint64 last_seen = 5;
 }
 
 // Update status of a single saved peer
-message L8SavedPeerUpdate {
+message L8DeviceStatusUpdate {
   // The packet id
   required uint32 id = 1;
 

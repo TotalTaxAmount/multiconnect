@@ -1,17 +1,29 @@
 <script lang="ts">
   import { writable, get } from "svelte/store";
   import { listen } from "@tauri-apps/api/event";
-  import { refreshDevices, sendPairingRequest } from "$lib/commands";
+  import {
+    refreshDevices,
+    sendPairingRequest,
+    sendPairingResponse,
+  } from "$lib/commands";
   import MdiPlusIcon from "~icons/mdi/plus";
   import MdiCloseIcon from "~icons/mdi/close";
-  import type { Device } from "$lib/types";
   import { onMount } from "svelte";
+  import type { Device } from "$lib/types";
 
   const pairedDevices = writable<
     Map<string, { device: Device; online: boolean; last_seen: number }>
   >(new Map());
   const discovered = writable<Map<string, Device>>(new Map());
   const overlayOpen = writable(false);
+  const peerPairRequest = writable<{ device: Device; uuid: string } | null>(
+    null,
+  );
+
+  const pairingStatus = writable<Record<string, "idle" | "pending" | "denied">>(
+    {},
+  );
+  const pairingRequests = writable<Record<string, string>>({});
 
   function upsert(
     store: typeof pairedDevices,
@@ -32,30 +44,61 @@
     refreshDevices();
 
     listen("device-status", (event: any) => {
-      const [device, online, last_seen, paired] = event.payload as [
+      const [device, online, last_seen] = event.payload as [
         Device,
         boolean,
         number,
-        boolean,
       ];
-      if (paired) {
-        upsert(pairedDevices, device, online, last_seen);
-      } else {
-        remove(pairedDevices, device.peer);
-      }
+      upsert(pairedDevices, device, online, last_seen);
     });
 
-    // discovery events
+    listen("peer-pair-request", (event: any) => {
+      const [device, uuid] = event.payload as [Device, string];
+      console.debug(`Pair request: device = ${device}, uuid = ${uuid}`);
+      peerPairRequest.set({ device, uuid });
+    });
+
     listen("peer-found", (event: any) => {
       const device = event.payload as Device;
+      console.debug(`Device found: device = ${device}`);
+
       discovered.update((m) => m.set(device.peer, device));
     });
+
     listen("peer-expired", (event: any) => {
       const peerId = event.payload as string;
+      console.debug(`Device expired: id = ${peerId}`);
+
       discovered.update((m) => {
         m.delete(peerId);
         return m;
       });
+    });
+
+    listen("pair-response", async (event: any) => {
+      const [uuid, accepted] = event.payload as [string, boolean];
+
+      pairingRequests.update((map) => {
+        const peerId = map[uuid];
+        delete map[uuid]; // clean up tracking map
+
+        if (peerId) {
+          pairingStatus.update((s) => {
+            s[peerId] = accepted ? "idle" : "denied";
+            return { ...s };
+          });
+
+          if (accepted) {
+            discovered.update((d) => {
+              d.delete(peerId);
+              return d;
+            });
+          }
+        }
+
+        return map;
+      });
+      await refreshDevices();
     });
   });
 
@@ -67,7 +110,11 @@
   }
 
   async function pairDevice(device: Device) {
-    await sendPairingRequest(device);
+    pairingStatus.update((s) => ({ ...s, [device.peer]: "pending" }));
+
+    const uuid = await sendPairingRequest(device);
+
+    pairingRequests.update((r) => ({ ...r, [uuid]: device.peer }));
   }
 </script>
 
@@ -87,9 +134,18 @@
           class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow"
         >
           <div class="flex justify-between items-center">
-            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
-              {paired.device.deviceName}
-            </h3>
+            <div class="flex items-center gap-2">
+              <span
+                class="inline-block w-2.5 h-2.5 rounded-full"
+                class:bg-green-500={paired.online}
+                class:bg-gray-400={!paired.online}
+              ></span>
+              <h3
+                class="text-lg font-semibold text-gray-800 dark:text-gray-100"
+              >
+                {paired.device.deviceName}
+              </h3>
+            </div>
             <span
               class="text-sm px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
             >
@@ -154,17 +210,99 @@
                 <div class="text-sm text-gray-500 dark:text-gray-400">
                   {device.deviceType} &bull; {device.osName}
                 </div>
+                {#if $pairingStatus[device.peer] === "denied"}
+                  <p class="text-sm text-red-500 mt-1">Request denied</p>
+                {/if}
               </div>
               <button
-                class="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+                class="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                 on:click={() => pairDevice(device)}
+                disabled={$pairingStatus[device.peer] === "pending"}
               >
-                Pair
+                {#if $pairingStatus[device.peer] === "pending"}
+                  <svg
+                    class="animate-spin h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"
+                    ></path>
+                  </svg>
+                  Pairing...
+                {:else}
+                  Pair
+                {/if}
               </button>
             </div>
           {/each}
         </div>
       {/if}
+    </div>
+  </div>
+{/if}
+
+{#if $peerPairRequest}
+  <div class="fixed inset-0 backdrop flex items-center justify-center z-50 p-4">
+    <div
+      class="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-md p-6 shadow-xl relative"
+    >
+      <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
+        Incoming Pair Request
+      </h3>
+
+      <div class="space-y-2">
+        <p class="text-gray-700 dark:text-gray-300">
+          <strong>Device:</strong>
+          {$peerPairRequest.device.deviceName}
+        </p>
+        <p class="text-gray-600 dark:text-gray-400">
+          <strong>Type:</strong>
+          {$peerPairRequest.device.deviceType}
+        </p>
+        <p class="text-gray-600 dark:text-gray-400">
+          <strong>OS:</strong>
+          {$peerPairRequest.device.osName}
+        </p>
+        <p class="text-xs text-gray-500 dark:text-gray-500 break-all">
+          <strong>Peer ID:</strong>
+          {$peerPairRequest.device.peer}
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-3 mt-6">
+        <button
+          class="px-4 py-2 rounded-lg bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-gray-100 hover:bg-gray-400 dark:hover:bg-gray-500"
+          on:click={async () => {
+            sendPairingResponse(false, $peerPairRequest.uuid);
+            peerPairRequest.set(null);
+            await refreshDevices();
+          }}
+        >
+          Deny
+        </button>
+        <button
+          class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700"
+          on:click={async () => {
+            sendPairingResponse(true, $peerPairRequest.uuid);
+            peerPairRequest.set(null);
+            await refreshDevices();
+          }}
+        >
+          Accept
+        </button>
+      </div>
     </div>
   </div>
 {/if}

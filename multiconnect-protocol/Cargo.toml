@@ -23,5 +23,8 @@ uuid = "1.16.0"
 os_info = "3.11.0"
 gethostname = "1.0.2"
 
+[target.'cfg(windows)'.dependencies]
+wmi = "0.17.2"
+
 [build-dependencies]
 prost-build = "0.13.5"

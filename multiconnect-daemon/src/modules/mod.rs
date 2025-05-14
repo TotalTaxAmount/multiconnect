@@ -2,16 +2,12 @@ pub mod pairing;
 pub mod store;
 
 use async_trait::async_trait;
-use bincode::de;
 use libp2p::PeerId;
 use log::{debug, error};
-use multiconnect_protocol::{local::peer, Device, Packet, SavedDevice};
+use multiconnect_protocol::{Device, Packet, SavedDevice};
 use std::{collections::HashMap, sync::Arc};
 use store::Store;
-use tokio::{
-  sync::{mpsc, Mutex},
-  time::{self, Duration},
-};
+use tokio::sync::{mpsc, Mutex};
 
 use crate::{
   networking::{NetworkCommand, NetworkEvent, NetworkManager},
@@ -31,12 +27,10 @@ pub enum Action {
 /// A module that can be used for features
 #[async_trait]
 pub trait MulticonnectModule: Send + Sync {
-  /// Runs when the daemon recives a packet from the frontend
+  /// Runs when the daemon receives a packet from the frontend
   async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx);
   /// Runs when a peer is discovered
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx);
-  // /// Runs when the frontend connects
-  // async fn on_fronend_connected(&mut self, ctx: &mut MulticonnectCtx);
   /// Runs once when the module is started
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>);
 }
@@ -50,7 +44,7 @@ pub struct MulticonnectCtx {
   this_device: Device,
   /// Device store
   store: Store,
-  ///
+  /// A list of devices
   devices: HashMap<PeerId, (SavedDevice, bool, bool)>,
 }
 
@@ -118,8 +112,8 @@ impl MulticonnectCtx {
     self.devices.get(id)
   }
 
-  pub fn is_pairied(&self, id: &PeerId) -> Option<bool> {
-    Some(self.devices.get(id)?.0.get_pairied())
+  pub fn is_paired(&self, id: &PeerId) -> Option<bool> {
+    Some(self.devices.get(id)?.0.get_paired())
   }
 
   /// Add a device to the list of paired devices
@@ -133,7 +127,7 @@ impl MulticonnectCtx {
     }
   }
 
-  pub fn update_pairied(&mut self, peer_id: &PeerId, paired: bool) {
+  pub fn update_paired(&mut self, peer_id: &PeerId, paired: bool) {
     if let Some((d, _, _)) = self.devices.get_mut(peer_id) {
       d.set_paired(paired);
     }
@@ -224,7 +218,7 @@ impl ModuleManager {
               module.on_network_event(event.clone(), &mut ctx).await;
             }
           } else {
-            error!("Error reciving peer packet channel");
+            error!("Error receiving peer packet channel");
           },
 
           action = send_packet_rx.recv() => if let Some(action) = action {

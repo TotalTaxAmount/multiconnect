@@ -1,17 +1,18 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use bincode::de;
 use libp2p::{request_response::ResponseChannel, PeerId};
 use log::{debug, info, warn};
 use multiconnect_protocol::{
-  local::peer::{L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L7DeviceStatus, L8SavedPeerUpdate},
+  local::peer::{
+    L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L7DeviceStatus, L8DeviceStatusUpdate,
+  },
   p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   shared::peer::S1PeerMeta,
   Device, Packet, SavedDevice,
 };
 use tokio::{
-  sync::{mpsc, Mutex, RwLock},
+  sync::{mpsc, Mutex},
   time::{interval, Instant},
 };
 use uuid::Uuid;
@@ -55,6 +56,8 @@ use super::{MulticonnectCtx, MulticonnectModule};
 pub struct PairingModule {
   /// Pending pair requests
   pending_requests: Arc<Mutex<HashMap<Uuid, (Instant, Packet, PeerId)>>>,
+  ///
+  discovered_devices: Arc<Mutex<HashMap<PeerId, Device>>>,
   /// Response channels for requests
   res_channels: Arc<Mutex<HashMap<PeerId, (Instant, ResponseChannel<Packet>)>>>,
   /// A channel for sending network commands
@@ -71,6 +74,7 @@ impl PairingModule {
     Self {
       pending_requests: Arc::new(Mutex::new(HashMap::new())),
       pairing_protocol_recv: Some(pairing_protocol_recv),
+      discovered_devices: Arc::new(Mutex::new(HashMap::new())),
       pairing_protocol_send,
       res_channels: Arc::new(Mutex::new(HashMap::new())),
     }
@@ -79,33 +83,36 @@ impl PairingModule {
 
 #[async_trait]
 impl MulticonnectModule for PairingModule {
-  #[doc = " Runs when the swarm recivies a packet from another peer"]
+  #[doc = " Runs when the swarm receives a packet from another peer"]
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
     match event {
       NetworkEvent::PeerExpired(peer_id) => {
-        if let Some(true) = ctx.is_pairied(&peer_id) {
-          ctx.send_to_frontend(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::update_online(&peer_id, false))).await;
+        if ctx.device_exists(&peer_id) {
+          ctx
+            .send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, false)))
+            .await;
         } else {
           ctx.send_to_frontend(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await;
         }
       }
       NetworkEvent::PeerDiscoverd(peer_id) => {
-        if let Some(_) = ctx.get_device(&peer_id) {
-          ctx.send_to_frontend(Packet::L8SavedPeerUpdate(L8SavedPeerUpdate::update_online(&peer_id, true))).await;
-        }
-        if ctx.this_device.peer > peer_id {
-          debug!("[first] Sending metadata to {}", peer_id);
-          let _ = self
-            .pairing_protocol_send
-            .send(NetworkCommand::SendPairingProtocolRequest(
-              peer_id,
-              Packet::S1PeerMeta(S1PeerMeta::from_device(&ctx.this_device)),
-            ))
-            .await;
+        if ctx.device_exists(&peer_id) {
+          ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
+        } else {
+          if ctx.this_device.peer > peer_id {
+            debug!("[first] Sending metadata to {}", peer_id);
+            let _ = self
+              .pairing_protocol_send
+              .send(NetworkCommand::SendPairingProtocolRequest(
+                peer_id,
+                Packet::S1PeerMeta(S1PeerMeta::from_device(&ctx.this_device)),
+              ))
+              .await;
+          }
         }
       }
       NetworkEvent::ConnectionOpenRequest(peer_id) => {
-        if let Some(paired) = ctx.is_pairied(&peer_id) {
+        if let Some(paired) = ctx.is_paired(&peer_id) {
           debug!("Received connection request from {} (saved: {:?})", peer_id, paired);
           if paired {
             ctx.approve_inbound_stream(peer_id).await;
@@ -118,15 +125,22 @@ impl MulticonnectModule for PairingModule {
     };
   }
 
-  #[doc = " Runs when the daemon recives a packet from the frontend"]
+  #[doc = " Runs when the daemon receives a packet from the frontend"]
   async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) {
     match event {
       FrontendEvent::RecvPacket(packet) => match packet {
         Packet::L3PeerPairResponse(packet) => {
           let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+          debug!("Received response for: {}", uuid);
+          let mut pending_requests = self.pending_requests.lock().await;
           // Check if there is a pending request for that id
-          if let Some((_, Packet::P2PeerPairRequest(_req), source)) = self.pending_requests.lock().await.remove(&uuid) {
+          if let Some((_, Packet::P2PeerPairRequest(req), source)) = pending_requests.remove(&uuid) {
             if let Some((_, ch)) = self.res_channels.lock().await.remove(&source) {
+              let device = bincode::deserialize::<Device>(&req.device).unwrap();
+
+              info!("Saving paired device");
+              self.discovered_devices.lock().await.remove(&device.peer);
+              ctx.add_device(SavedDevice::new(device, true));
               debug!("Sending back response");
               // Send the response
               let _ = self
@@ -137,13 +151,15 @@ impl MulticonnectModule for PairingModule {
                 ))
                 .await;
             } else {
-              warn!("Failed to find response channel for request")
+              warn!("Failed to find response channel for request");
             }
+          } else {
+            warn!("Invalid request uuid: pending: {:?}", pending_requests);
           }
         }
         Packet::L2PeerPairRequest(packet) => {
           let device: Device = bincode::deserialize::<Device>(&packet.device).unwrap();
-          if ctx.device_exists(&device.peer) {
+          if self.discovered_devices.lock().await.contains_key(&device.peer) {
             debug!("Sending pair request to: {}, id = {}", device.peer, packet.req_uuid);
             let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
             self
@@ -161,17 +177,20 @@ impl MulticonnectModule for PairingModule {
           }
         }
         Packet::L4Refresh(_) => {
-          let devices = ctx.get_devices().values();
-          for (device, online, _connected) in devices {
+          let paired_devices = ctx.get_devices().values();
+          for (device, online, _connected) in paired_devices {
             ctx
               .send_to_frontend(Packet::L7DeviceStatus(L7DeviceStatus::new(
                 device.get_device().peer,
                 *online,
-                device.get_pairied(),
                 device.get_device(),
                 device.last_seen(),
               )))
               .await;
+          }
+
+          for device in self.discovered_devices.lock().await.values() {
+            ctx.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(device))).await;
           }
         }
         _ => {}
@@ -184,6 +203,7 @@ impl MulticonnectModule for PairingModule {
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) {
     if let Some(mut ch) = self.pairing_protocol_recv.take() {
       let pairing_protocol_send = self.pairing_protocol_send.clone();
+      let discovered_devices = self.discovered_devices.clone();
       let pending_requests = self.pending_requests.clone();
       let res_channels = self.res_channels.clone();
       let mut retain_interval = interval(Duration::from_secs(10));
@@ -192,7 +212,7 @@ impl MulticonnectModule for PairingModule {
         let guard = ctx.lock().await;
         let devices = guard.get_devices();
         for (peer_id, (d, _, _)) in devices.iter() {
-          if d.get_pairied() && guard.get_this_device().peer > *peer_id {
+          if d.get_paired() && guard.get_this_device().peer > *peer_id {
             let _ = pairing_protocol_send.send(NetworkCommand::OpenStream(*peer_id)).await;
           }
         }
@@ -209,9 +229,10 @@ impl MulticonnectModule for PairingModule {
                         let device = Device::from_meta(packet, peer_id);
                         debug!("Revived device meta {:?}", device);
 
-                        let mut guard = ctx.lock().await;
+                        let guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                        guard.add_device(SavedDevice::new(device, false));
+                        let mut discovered_devices = discovered_devices.lock().await;
+                        discovered_devices.insert(device.peer, device);
 
                         debug!("[second] Sending meta to {}", peer_id);
                         let _ = pairing_protocol_send.send(NetworkCommand::SendPairingProtocolResponse(response_channel, Packet::S1PeerMeta(S1PeerMeta::from_device(guard.get_this_device())))).await;
@@ -239,9 +260,11 @@ impl MulticonnectModule for PairingModule {
                       Packet::S1PeerMeta(packet) => {
                         let device = Device::from_meta(packet, peer_id);
                         debug!("Received device meta: {:?}", device);
-                        let mut guard = ctx.lock().await;
+                        let guard = ctx.lock().await;
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
-                        guard.add_device(SavedDevice::new(device,false));
+                        let mut discovered_devices = discovered_devices.lock().await;
+                        discovered_devices.insert(device.peer, device);
+                        // guard.add_device(SavedDevice::new(device, false));
 
                       },
                       Packet::P3PeerPairResponse(packet) => {
@@ -254,7 +277,8 @@ impl MulticonnectModule for PairingModule {
                             let device = bincode::deserialize::<Device>(&req.device).unwrap();
                             info!("Successfully paired with: {}", device.peer);
 
-                            guard.update_pairied(&peer_id, true);
+                            discovered_devices.lock().await.remove(&device.peer);
+                            guard.add_device(SavedDevice::new(device, true));
                             guard.save_store().await;
                           }
 

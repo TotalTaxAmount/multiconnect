@@ -36,7 +36,7 @@ pub fn run(port: u16) {
           let daemon = Daemon::connect(&port).await.unwrap();
 
           let mut manager = FrontendModuleManager::new(daemon, handle.clone());
-          // Initalize modules
+          // Initialize modules
           manager.register(PairingModule::new());
 
           manager.init().await;
@@ -50,6 +50,7 @@ pub fn run(port: u16) {
       get_theme,
       pairing::send_pairing_request,
       pairing::refresh_devices,
+      pairing::send_pairing_response,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

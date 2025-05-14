@@ -7,7 +7,7 @@ use std::{
 use libp2p::PeerId;
 use log::error;
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{Device, SavedDevice};
+use multiconnect_protocol::SavedDevice;
 
 const FILENAME: &str = "saved_devices.json";
 
@@ -85,7 +85,7 @@ impl Store {
     }
   }
 
-  pub fn set_pairied(&mut self, peer_id: &PeerId, paired: bool) {
+  pub fn set_paired(&mut self, peer_id: &PeerId, paired: bool) {
     if let Some(d) = self.get_device_mut(peer_id) {
       d.set_paired(paired);
     }
