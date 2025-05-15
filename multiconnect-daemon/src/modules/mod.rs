@@ -4,9 +4,9 @@ pub mod store;
 
 use async_trait::async_trait;
 use libp2p::PeerId;
-use log::{debug, error};
+use log::{debug, error, warn};
 use multiconnect_protocol::{Device, Packet, SavedDevice};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, error::Error, sync::Arc};
 use store::Store;
 use tokio::sync::{mpsc, Mutex};
 
@@ -29,11 +29,11 @@ pub enum Action {
 #[async_trait]
 pub trait MulticonnectModule: Send + Sync {
   /// Runs when the daemon receives a packet from the frontend
-  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx);
+  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>>;
   /// Runs when a peer is discovered
-  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx);
+  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>>;
   /// Runs once when the module is started
-  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>);
+  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) -> Result<(), Box<dyn Error>>;
 }
 
 /// Context that modules get and allows them to do things like send packets to
@@ -195,7 +195,9 @@ impl ModuleManager {
     let send_network_command = self.network_manager.send_command_channel();
 
     for module in self.modules.iter_mut() {
-      module.init(ctx.clone()).await;
+      if let Err(e) = module.init(ctx.clone()).await {
+        warn!("Error initlaizing module: {}", e);
+      }
     }
 
     let mut send_packet_rx = self.send_packet_rx.take().unwrap();
@@ -207,7 +209,9 @@ impl ModuleManager {
             debug!("Calling on_frontend_event");
             let mut ctx = ctx.lock().await;
             for module in modules.iter_mut() {
-              module.on_frontend_event(event.clone(), &mut ctx).await;
+              if let Err(e) = module.on_frontend_event(event.clone(), &mut ctx).await {
+                warn!("Error while running modules (on_frontend_event): {}", e);
+              }
             }
           },
 
@@ -215,7 +219,9 @@ impl ModuleManager {
             debug!("Calling on_network_event");
             let mut ctx = ctx.lock().await;
             for module in modules.iter_mut() {
-              module.on_network_event(event.clone(), &mut ctx).await;
+              if let Err(e) = module.on_network_event(event.clone(), &mut ctx).await {
+                warn!("Error while running modules (on_network_event): {}", e);
+              }
             }
           } else {
             error!("Error receiving peer packet channel");

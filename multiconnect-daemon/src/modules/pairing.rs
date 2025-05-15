@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, error::Error, future::Future, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use libp2p::{request_response::ResponseChannel, PeerId};
@@ -84,7 +84,7 @@ impl PairingModule {
 #[async_trait]
 impl MulticonnectModule for PairingModule {
   #[doc = " Runs when the swarm receives a packet from another peer"]
-  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
+  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     match event {
       NetworkEvent::PeerExpired(peer_id) => {
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
@@ -128,21 +128,23 @@ impl MulticonnectModule for PairingModule {
       }
       _ => {}
     };
+
+    Ok(())
   }
 
   #[doc = " Runs when the daemon receives a packet from the frontend"]
-  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) {
+  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     match event {
       FrontendEvent::RecvPacket(packet) => match packet {
         // This happens on the reciviers system
         Packet::L3PeerPairResponse(packet) => {
-          let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+          let uuid = Uuid::from_str(&packet.req_uuid)?;
           debug!("Received response for: {}", uuid);
           let mut pending_requests = self.pending_requests.lock().await;
           // Check if there is a pending request for that id
           if let Some((_, Packet::P2PeerPairRequest(_req), source)) = pending_requests.remove(&uuid) {
             if let Some((_, ch)) = self.res_channels.lock().await.remove(&source) {
-              // let device = bincode::deserialize::<Device>(&req.device).unwrap(); // <- The target
+              // let device = bincode::deserialize::<Device>(&req.device)?; // <- The target
 
               if packet.accepted {
                 info!("Saving paired device");
@@ -172,8 +174,8 @@ impl MulticonnectModule for PairingModule {
           }
         }
         Packet::L2PeerPairRequest(packet) => {
-          let target: Device = bincode::deserialize::<Device>(&packet.device).unwrap();
-          let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+          let target: Device = bincode::deserialize::<Device>(&packet.device)?;
+          let uuid = Uuid::from_str(&packet.req_uuid)?;
 
           if self.discovered_devices.lock().await.contains_key(&target.peer) && !ctx.device_exists(&target.peer) {
             debug!("Sending pair request to: {}, id = {}", target.peer, packet.req_uuid);
@@ -215,7 +217,7 @@ impl MulticonnectModule for PairingModule {
           for (uuid, (_, packet, source)) in self.pending_requests.lock().await.iter() {
             if let Packet::L2PeerPairRequest(req) = packet {
               if source != &ctx.this_device.peer {
-                let device = bincode::deserialize::<Device>(&req.device).unwrap();
+                let device = bincode::deserialize::<Device>(&req.device)?;
                 ctx.send_to_frontend(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid.clone()))).await;
               }
             }
@@ -226,9 +228,11 @@ impl MulticonnectModule for PairingModule {
       FrontendEvent::Connected => {}
       _ => {}
     }
+
+    Ok(())
   }
 
-  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) {
+  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) -> Result<(), Box<dyn Error>> {
     if let Some(mut ch) = self.pairing_protocol_recv.take() {
       let pairing_protocol_send = self.pairing_protocol_send.clone();
       let discovered_devices = self.discovered_devices.clone();
@@ -340,5 +344,6 @@ impl MulticonnectModule for PairingModule {
         }
       });
     }
+    Ok(())
   }
 }

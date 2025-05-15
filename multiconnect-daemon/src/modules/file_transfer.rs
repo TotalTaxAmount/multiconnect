@@ -4,6 +4,7 @@ use log::{debug, info, warn};
 use sha2::{Digest, Sha256};
 use std::{
   collections::HashMap,
+  error::Error,
   fs::{self, File},
   io::{self, BufReader, Read, Write},
   path::{Path, PathBuf},
@@ -84,12 +85,12 @@ impl FileTransferModule {
 
 #[async_trait]
 impl MulticonnectModule for FileTransferModule {
-  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
+  async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     if let NetworkEvent::PacketRecived(source, packet) = event {
       match packet {
         Packet::P4TransferStart(packet) => {
-          let uuid = Uuid::from_str(&packet.uuid).unwrap();
-          let path = Self::create_unique_file(&packet.file_name).unwrap();
+          let uuid = Uuid::from_str(&packet.uuid)?;
+          let path = Self::create_unique_file(&packet.file_name)?;
           debug!("File path: {:?}", path);
 
           self.active_transfers.lock().await.insert(
@@ -98,20 +99,20 @@ impl MulticonnectModule for FileTransferModule {
           );
         }
         Packet::P5TransferChunk(packet) => {
-          let uuid = Uuid::from_str(&packet.uuid).unwrap();
+          let uuid = Uuid::from_str(&packet.uuid)?;
           if let Some(status) = self.active_transfers.lock().await.get_mut(&uuid) {
             let path = Path::new(&status.file);
-            let mut file = OpenOptions::new().append(true).open(&path).await.unwrap();
+            let mut file = OpenOptions::new().append(true).open(&path).await?;
             if let Ok(len) = file.write(&packet.data).await {
               status.processed_len += len;
 
               if status.processed_len == status.total_len {
-                let sig = Self::hash_sha256(path).unwrap();
+                let sig = Self::hash_sha256(path)?;
                 if sig == status.hash {
                   debug!("Sucessfully saved file");
                   ctx
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                      path.file_name().unwrap().to_string_lossy().to_string(),
+                      path.file_name().ok_or("Failed to get filename")?.to_string_lossy().to_string(),
                       multiconnect_protocol::local::transfer::l11_transfer_status::Status::Ok,
                     )))
                     .await;
@@ -122,7 +123,7 @@ impl MulticonnectModule for FileTransferModule {
                   let _ = fs::remove_file(path);
                   ctx
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                      path.file_name().unwrap().to_string_lossy().to_string(),
+                      path.file_name().ok_or("Failed to get filename")?.to_string_lossy().to_string(),
                       multiconnect_protocol::local::transfer::l11_transfer_status::Status::InvalidSig,
                     )))
                     .await;
@@ -130,7 +131,7 @@ impl MulticonnectModule for FileTransferModule {
               } else {
                 ctx
                   .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
-                    path.file_name().unwrap().to_string_lossy().to_string(),
+                    path.file_name().ok_or("Failed to get filename")?.to_string_lossy().to_string(),
                     status.total_len as u64,
                     status.processed_len as u64,
                   )))
@@ -143,12 +144,20 @@ impl MulticonnectModule for FileTransferModule {
         }
         Packet::P6TransferStatus(packet) => match packet.status() {
           multiconnect_protocol::generated::p6_transfer_status::Status::Ok => {
-            let uuid = Uuid::from_str(&packet.uuid).unwrap();
-            let file_name = Path::new(&self.active_transfers.lock().await.remove(&uuid).unwrap().file)
-              .file_name()
-              .unwrap()
-              .to_string_lossy()
-              .to_string();
+            let uuid = Uuid::from_str(&packet.uuid)?;
+            let file_name = Path::new(
+              &self
+                .active_transfers
+                .lock()
+                .await
+                .remove(&uuid)
+                .ok_or(format!("No active transfer for uuid = {}", uuid))?
+                .file,
+            )
+            .file_name()
+            .ok_or("Failed to get filename")?
+            .to_string_lossy()
+            .to_string();
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                 file_name,
@@ -158,12 +167,20 @@ impl MulticonnectModule for FileTransferModule {
           }
           multiconnect_protocol::generated::p6_transfer_status::Status::MalformedPacket => todo!(),
           multiconnect_protocol::generated::p6_transfer_status::Status::WrongSig => {
-            let uuid = Uuid::from_str(&packet.uuid).unwrap();
-            let file_name = Path::new(&self.active_transfers.lock().await.remove(&uuid).unwrap().file)
-              .file_name()
-              .unwrap()
-              .to_string_lossy()
-              .to_string();
+            let uuid = Uuid::from_str(&packet.uuid)?;
+            let file_name = Path::new(
+              &self
+                .active_transfers
+                .lock()
+                .await
+                .remove(&uuid)
+                .ok_or(format!("No active transfer for uuid = {}", uuid))?
+                .file,
+            )
+            .file_name()
+            .ok_or("Failed to get filename")?
+            .to_string_lossy()
+            .to_string();
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                 file_name,
@@ -176,23 +193,25 @@ impl MulticonnectModule for FileTransferModule {
         _ => {}
       }
     }
+
+    Ok(())
   }
 
-  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) {
+  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     if let FrontendEvent::RecvPacket(packet) = event {
       match packet {
         Packet::L9TransferFile(packet) => {
           let uuid = Uuid::new_v4();
           let path = Path::new(&packet.file_path);
-          let hash = Self::hash_sha256(path).unwrap();
-          let size = fs::metadata(path).unwrap().len();
+          let hash = Self::hash_sha256(path)?;
+          let size = fs::metadata(path)?.len();
 
           self.active_transfers.lock().await.insert(
             uuid,
             FileTransferState::new(
               size as usize,
               ctx.this_device.peer,
-              path.file_name().unwrap().to_string_lossy(),
+              path.file_name().ok_or("Failed to get filename")?.to_string_lossy(),
               hash,
             ),
           );
@@ -200,7 +219,10 @@ impl MulticonnectModule for FileTransferModule {
         _ => {}
       }
     }
+    Ok(())
   }
 
-  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) {}
+  async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) -> Result<(), Box<dyn Error>> {
+    Ok(())
+  }
 }
