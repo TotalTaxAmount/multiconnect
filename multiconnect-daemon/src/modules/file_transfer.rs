@@ -119,6 +119,7 @@ impl MulticonnectModule for FileTransferModule {
                   // ctx.send_to_peer(, packet)
                 } else {
                   warn!("File signature doesnt match: {} != {}", sig, status.hash);
+                  let _ = fs::remove_file(path);
                   ctx
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                       path.file_name().unwrap().to_string_lossy().to_string(),
