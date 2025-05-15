@@ -9,12 +9,14 @@ message P4TransferStart {
 
 message P5TransferChunk {
   required uint32 id = 1;
+  required string uuid = 2;
   required bytes data = 3;
 }
 
 message P6TransferStatus {
   required uint32 id = 1;
-  required Status status = 2;
+  required string uuid = 2;
+  required Status status = 3;
 
   enum Status {
     OK = 0;

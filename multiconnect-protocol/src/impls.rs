@@ -1,10 +1,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use libp2p::PeerId;
+use rand::rand_core::impls;
 use uuid::Uuid;
 
 use crate::{
-  local::peer::*,
+  local::{
+    peer::*,
+    transfer::{l11_transfer_status::Status, L10TransferProgress, L11TransferStatus, L9TransferFile},
+  },
   p2p::{peer::*, *},
   shared::peer::*,
   Device, Packet,
@@ -102,6 +106,24 @@ impl L8DeviceStatusUpdate {
 
   pub fn update_online(peer_id: &PeerId, online: bool) -> Self {
     Self::new(peer_id, None, None, Some(online), Some(SystemTime::now()))
+  }
+}
+
+impl L9TransferFile {
+  pub fn new(file_path: String) -> Self {
+    Self { id: Packet::create_id(), file_path }
+  }
+}
+
+impl L10TransferProgress {
+  pub fn new(file_name: String, total: u64, done: u64) -> Self {
+    Self { id: Packet::create_id(), file_name, total, done }
+  }
+}
+
+impl L11TransferStatus {
+  pub fn new(file_name: String, status: Status) -> Self {
+    Self { id: Packet::create_id(), file_name, status: status.into() }
   }
 }
 

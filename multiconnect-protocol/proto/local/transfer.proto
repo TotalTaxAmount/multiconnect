@@ -8,3 +8,20 @@ message L9TransferFile {
   required string file_path = 2;
 }
 
+message L10TransferProgress {
+  required uint32 id = 1;
+  required string file_name = 2;
+  required uint64 total = 3;
+  required uint64 done = 4;
+}
+
+message L11TransferStatus {
+  required uint32 id = 1;
+  required string file_name = 2;
+  required Status status = 3;
+
+  enum Status {
+    OK = 1;
+    INVALID_SIG = 2;
+  }
+}

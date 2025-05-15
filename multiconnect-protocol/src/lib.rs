@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use generated::{
   multiconnect::{
-    local::peer::*,
+    local::{peer::*, transfer::*},
     p2p::{peer::*, *},
     shared::peer::*,
   },
@@ -24,6 +24,7 @@ pub mod generated {
 
 pub use generated::multiconnect::*;
 
+// Generate handlers for a list of packets
 macro_rules! gen_packet_handlers {
   {$($variant:ident => $tag:expr),* $(,)?} => {
     #[derive(Debug, Clone, PartialEq)]
@@ -166,7 +167,10 @@ gen_packet_handlers! {
   L4Refresh=> 11,
   L7DeviceStatus=> 12,
   L8DeviceStatusUpdate=> 13,
-  S1PeerMeta => 14
+  L9TransferFile => 14,
+  L10TransferProgress => 15,
+  L11TransferStatus => 16,
+  S1PeerMeta => 17
 }
 
 impl Packet {

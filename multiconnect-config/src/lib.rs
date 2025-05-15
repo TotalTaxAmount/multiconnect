@@ -8,7 +8,7 @@ use std::{
   str::{self, FromStr},
 };
 
-use configs::FrontendConfig;
+use configs::{FrontendConfig, ModuleConfig};
 use fs2::FileExt;
 use log::{debug, error, info};
 use once_cell::sync::OnceCell;
@@ -26,6 +26,7 @@ pub struct ConfigManager {
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
   pub frontend: FrontendConfig,
+  pub module_config: ModuleConfig,
 }
 
 impl ConfigManager {
