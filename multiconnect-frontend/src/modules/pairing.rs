@@ -2,7 +2,7 @@ use std::{any::Any, collections::HashMap, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use libp2p_core::PeerId;
-use log::{debug, error};
+use log::{debug, error, warn};
 use multiconnect_protocol::{
   local::peer::{L2PeerPairRequest, L3PeerPairResponse, L4Refresh},
   Device, Packet,
@@ -67,6 +67,8 @@ impl FrontendModule for PairingModule {
           //   let _ = ctx.app.emit("peer-expired", source.peer);
           // }
           let _ = ctx.app.emit("pair-response", (packet.req_uuid, packet.accepted));
+        } else {
+          warn!("No request for response")
         }
       }
       Packet::L0PeerFound(packet) => {

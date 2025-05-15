@@ -88,6 +88,7 @@
 
     listen("pair-response", async (event: any) => {
       const [uuid, accepted] = event.payload as [string, boolean];
+      console.log(`req is ${uuid} ${accepted}`);
 
       pairingRequests.update((map) => {
         const peerId = map[uuid];
@@ -100,7 +101,6 @@
           });
 
           if (accepted) {
-            console.log("wtf");
             discovered.update((d) => {
               d.delete(peerId);
               return d;
@@ -110,6 +110,8 @@
 
         return map;
       });
+
+      await refreshDevices();
     });
 
     await refreshDevices();

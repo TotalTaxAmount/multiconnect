@@ -87,7 +87,8 @@ impl MulticonnectModule for PairingModule {
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) {
     match event {
       NetworkEvent::PeerExpired(peer_id) => {
-        if ctx.device_exists(&peer_id) {
+        if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
+          *online = false;
           ctx
             .send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, false)))
             .await;
@@ -96,7 +97,8 @@ impl MulticonnectModule for PairingModule {
         }
       }
       NetworkEvent::PeerDiscoverd(peer_id) => {
-        if ctx.device_exists(&peer_id) {
+        if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
+          *online = true;
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
           if ctx.this_device.peer > peer_id {
             ctx.open_stream(peer_id).await;
@@ -208,6 +210,15 @@ impl MulticonnectModule for PairingModule {
 
           for device in self.discovered_devices.lock().await.values() {
             ctx.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(device))).await;
+          }
+
+          for (uuid, (_, packet, source)) in self.pending_requests.lock().await.iter() {
+            if let Packet::L2PeerPairRequest(req) = packet {
+              if source != &ctx.this_device.peer {
+                let device = bincode::deserialize::<Device>(&req.device).unwrap();
+                ctx.send_to_frontend(Packet::L2PeerPairRequest(L2PeerPairRequest::new(&device, uuid.clone()))).await;
+              }
+            }
           }
         }
         _ => {}

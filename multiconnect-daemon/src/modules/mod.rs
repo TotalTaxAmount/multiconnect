@@ -1,3 +1,4 @@
+pub mod file_transfer;
 pub mod pairing;
 pub mod store;
 
@@ -125,16 +126,11 @@ impl MulticonnectCtx {
     self.devices.insert(device.get_device().peer, (device, true, false));
   }
 
-  pub fn update_last_seen(&mut self, peer_id: &PeerId, last_seen: u64) {
-    if let Some((d, _, _)) = self.devices.get_mut(peer_id) {
-      d.set_last_seen(last_seen);
+  pub fn get_device_mut(&mut self, id: &PeerId) -> Option<&mut (SavedDevice, bool, bool)> {
+    if let Some(d) = self.devices.get_mut(id) {
+      return Some(d);
     }
-  }
-
-  pub fn update_paired(&mut self, peer_id: &PeerId, paired: bool) {
-    if let Some((d, _, _)) = self.devices.get_mut(peer_id) {
-      d.set_paired(paired);
-    }
+    None
   }
 
   /// Remove a paired  device

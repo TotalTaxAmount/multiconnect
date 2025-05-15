@@ -3,27 +3,8 @@ syntax = "proto2";
 
 package multiconnect.local.transfer;
 
-message TransferStart {
+message L9TransferFile {
   required uint32 id = 1;
-  required uint64 total_len = 2;
+  required string file_path = 2;
 }
 
-message TransferChunk {
-  required uint32 id = 1;
-  required uint64 len = 2;
-  required bytes data = 3;
-}
-
-message TransferEnd {
-  required uint32 id = 1;
-}
-
-message TransferStatus {
-  required uint32 id = 1;
-  required Status status = 2;
-}
-
-enum Status {
-  OK = 0;
-  MALFORMED_PACKET = 1;
-}
