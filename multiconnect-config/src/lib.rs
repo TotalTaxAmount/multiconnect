@@ -25,8 +25,10 @@ pub struct ConfigManager {
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+  #[serde(default)]
   pub frontend: FrontendConfig,
-  pub module_config: ModuleConfig,
+  #[serde(default)]
+  pub moduled: ModuleConfig,
 }
 
 impl ConfigManager {
