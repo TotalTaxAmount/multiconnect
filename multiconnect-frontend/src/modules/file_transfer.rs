@@ -1,15 +1,13 @@
-use std::{any::Any, collections::HashMap, error::Error, str::FromStr, sync::Arc};
+use std::{any::Any, error::Error, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use libp2p_core::PeerId;
-use log::debug;
 use multiconnect_protocol::{
-  local::transfer::{l10_transfer_progress, L9TransferFile},
+  local::transfer::L9TransferFile,
   Packet,
 };
 use tauri::{Emitter, State};
-use tokio::sync::{Mutex, MutexGuard};
-use uuid::Uuid;
+use tokio::sync::Mutex;
 
 use crate::with_ctx;
 

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, future::Future, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, error::Error, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use libp2p::{request_response::ResponseChannel, PeerId};

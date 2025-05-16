@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use libp2p::PeerId;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use multiconnect_config::CONFIG;
 use sha2::{Digest, Sha256};
 use std::{
-  collections::{HashMap, VecDeque},
+  collections::HashMap,
   error::Error,
   io,
   path::{Path, PathBuf},
@@ -15,7 +15,7 @@ use std::{
 use tokio::{
   fs::{self, File, OpenOptions},
   io::{AsyncReadExt, AsyncWriteExt, BufReader},
-  sync::{broadcast, Mutex, Notify},
+  sync::{broadcast, Mutex},
 };
 use uuid::Uuid;
 
