@@ -10,7 +10,7 @@ use libp2p::{
   swarm::{NetworkBehaviour, SwarmEvent},
   tcp, yamux, Multiaddr, PeerId, SwarmBuilder,
 };
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use multiconnect_config::CONFIG;
 use multiconnect_protocol::{Device, Packet};
 use protocols::{BehaviourEvent, MulticonnectDataBehaviour, PairingCodec};
@@ -38,7 +38,7 @@ pub enum NetworkEvent {
   /// A peer expires on the network
   PeerExpired(PeerId),
   /// A packet is recived from a peer
-  PacketRecived(PeerId, Packet),
+  PacketReceived(PeerId, Packet),
   /// A peer requests to open a stream
   ConnectionOpenRequest(PeerId),
   /// A connectio to a peer is closed
@@ -203,7 +203,7 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::PacketRecived(source, packet))) => {
               debug!("Received multiconnect protocol event from {}", source);
-              let _ = network_event_tx.send(NetworkEvent::PacketRecived(source, packet));
+              let _ = network_event_tx.send(NetworkEvent::PacketReceived(source, packet));
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionOpenRequest(peer))) => {
               debug!("Stream open request from {}", peer);
@@ -220,8 +220,10 @@ impl NetworkManager {
           cmd = send_packet_rx.recv() => if let Some(cmd) = cmd {
             match cmd {
                 NetworkCommand::SendPacket(peer_id, packet) => {
-                  debug!("Sending {:?} to {}", packet, peer_id);
-                  let _ = swarm.behaviour_mut().packet_protocol.send_packet(&peer_id, packet).await;
+                  trace!("Sending {:?} to {}", packet, peer_id);
+                  if let Err(e) = swarm.behaviour_mut().packet_protocol.send_packet(&peer_id, packet).await {
+                    error!("Error sending packet to {}: {}", peer_id, e);
+                  };
                 },
                 NetworkCommand::ApproveStream(peer_id) => {
                   debug!("Approving stream for {}", peer_id);

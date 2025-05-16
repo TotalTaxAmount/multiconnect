@@ -65,7 +65,8 @@ impl Daemon {
                       }
                     };
 
-                    debug!("Received {:?} packet", packet);
+
+                    trace!("Received {:?} packet", packet);
 
                     if let Err(e) = incoming_tx.send(packet) {
                       error!("Error sending packet (local): {}", e);

@@ -153,8 +153,8 @@ impl MulticonnectModule for PairingModule {
                   ctx.save_store().await;
                 }
 
-                debug!("Attempting to open stream");
-                ctx.open_stream(source).await;
+                // debug!("Attempting to open stream");
+                // ctx.open_stream(source).await;
               }
 
               debug!("Sending back response");
@@ -317,8 +317,10 @@ impl MulticonnectModule for PairingModule {
                             guard.add_device(SavedDevice::new(device.clone(), true));
                             guard.save_store().await;
 
+
                             debug!("Attempting to open stream");
                             guard.open_stream(device.peer).await;
+
                           }
 
                           guard.send_to_frontend(Packet::L3PeerPairResponse(L3PeerPairResponse::new(packet.accepted, uuid))).await;

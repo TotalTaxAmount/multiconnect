@@ -20,7 +20,7 @@ use libp2p::{
   swarm::{ConnectionHandler, ConnectionHandlerEvent, NetworkBehaviour, SubstreamProtocol, ToSwarm},
   InboundUpgrade, OutboundUpgrade, PeerId,
 };
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use multiconnect_protocol::Packet;
 use tokio::sync::{mpsc, Mutex};
 
@@ -214,9 +214,8 @@ impl MulticonnectDataBehaviour {
   pub async fn send_packet(&mut self, peer_id: &PeerId, packet: Packet) -> std::io::Result<()> {
     if let Some(s) = self.open_streams.get_mut(peer_id) {
       let bytes = Packet::to_bytes(&packet).unwrap();
-      debug!("Bytes: {:?}", bytes);
-      let _ = s.lock().await.write_all(&bytes).await;
-      let _ = s.lock().await.flush().await;
+      s.lock().await.write_all(&bytes).await?;
+      s.lock().await.flush().await?;
       Ok(())
     } else {
       warn!("Attempted to send a packet to a peer that is not connected");
@@ -234,7 +233,7 @@ impl MulticonnectDataBehaviour {
       debug!("Approving stream request from: {}", peer_id);
       self.open_streams.insert(peer_id, Arc::new(Mutex::new(s)));
     } else {
-      warn!("Attempted to approve a nonpending stream");
+      warn!("Attempted to approve a non-pending stream");
     }
   }
 
@@ -274,7 +273,7 @@ impl MulticonnectDataBehaviour {
               }
             };
 
-            debug!("Received {:?} from peer", packet);
+            trace!("Received {:?} from peer", packet);
             let _ = tx.send((peer_id.clone(), packet)).await;
           }
           Err(e) => {
@@ -353,7 +352,7 @@ impl NetworkBehaviour for MulticonnectDataBehaviour {
     }
 
     if let Some(e) = self.queued_events.pop_front() {
-      debug!("{:?}", e);
+      // debug!("{:?}", e);
       return Poll::Ready(e);
     }
 

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use libp2p::PeerId;
 use log::{debug, info, warn};
+use multiconnect_config::CONFIG;
 use sha2::{Digest, Sha256};
 use std::{
   collections::{HashMap, VecDeque},
@@ -95,13 +96,22 @@ impl FileTransferModule {
 #[async_trait]
 impl MulticonnectModule for FileTransferModule {
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
-    if let NetworkEvent::PacketRecived(source, packet) = event {
+    if let NetworkEvent::PacketReceived(source, packet) = event {
       match packet {
         Packet::P4TransferStart(packet) => {
           let uuid = Uuid::from_str(&packet.uuid)?;
-          let path = Self::create_unique_file(&packet.file_name).await?.join(".tmp");
+          let cfg = &CONFIG.get().ok_or("Failed to get config")?.read().await;
+          let base = Path::new(&cfg.get_config().modules.transfer.save_path);
 
-          debug!("File path: {:?}", path);
+          let mut file_name =
+            Path::new(&packet.file_name).file_name().ok_or("Failed to get filename from path")?.to_os_string();
+          file_name.push(".tmp");
+
+          let full_path = base.join(file_name);
+
+          let path = Self::create_unique_file(&full_path).await?;
+
+          debug!("Received transfer start from {} for {:?}: uuid = {}", source, path, uuid);
 
           self.incoming_transfers.lock().await.insert(
             uuid,
@@ -125,7 +135,7 @@ impl MulticonnectModule for FileTransferModule {
                   let final_path = parent.join(file_name);
 
                   tokio::fs::rename(path, &final_path).await?;
-                  debug!("Sucessfully saved file");
+                  debug!("Successfully saved file ({} bytes)", status.total_len);
                   ctx
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                       path.file_name().ok_or("Failed to get filename")?.to_string_lossy().to_string(),
@@ -220,6 +230,7 @@ impl MulticonnectModule for FileTransferModule {
     if let FrontendEvent::RecvPacket(packet) = event {
       match packet {
         Packet::L9TransferFile(packet) => {
+          debug!("Received command to send file from fronted");
           let len = fs::metadata(&packet.file_path).await?.len() as usize;
           let peer_id = PeerId::from_str(&packet.target).unwrap();
           let hash = Self::hash_sha256(Path::new(&packet.file_path)).await?;
@@ -238,6 +249,7 @@ impl MulticonnectModule for FileTransferModule {
     tokio::spawn(async move {
       loop {
         if let Ok(transfer) = outgoing_transfer_rx.recv().await {
+          debug!("Starting transfer: {}, sig = {}", transfer.file, transfer.hash);
           let transfer_uuid = Uuid::new_v4();
           let path = Path::new(&transfer.file);
           let chunk_size = u16::MAX as usize - 257;

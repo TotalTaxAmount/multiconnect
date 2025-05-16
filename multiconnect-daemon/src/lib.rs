@@ -120,7 +120,6 @@ impl Daemon {
               let mut raw: Vec<u8> = vec![0u8; len.into()];
               match read_half.read_exact(&mut raw).await {
                 Ok(_) => {
-                  trace!("Bytes: {:?}", raw);
                   let packet = match Packet::from_bytes(&raw) {
                   Ok(p) => p,
                   Err(e) => {
@@ -129,7 +128,7 @@ impl Daemon {
                   }
                 };
 
-                debug!("Received {:?} packet", packet);
+                trace!("Received {:?} packet", packet);
 
                 if let Err(e) = self.incoming_tx.send(FrontendEvent::RecvPacket(packet)) {
                   error!("Failed to add send packet (local): {}", e);
