@@ -81,7 +81,7 @@ impl MulticonnectBehavior {
     let packet_protocol = MulticonnectDataBehaviour::new();
 
     let mdns_config: mdns::Config = mdns::Config {
-      ttl: Duration::from_secs(2),
+      ttl: Duration::from_secs(4),
       query_interval: std::time::Duration::from_secs(1),
       ..Default::default()
     };
@@ -173,7 +173,7 @@ impl NetworkManager {
                 if !discovered_peers.contains(&peer_id) {
                   discovered_peers.insert(peer_id);
                   info!("Discovered peer: {}", peer_id);
-                  network_event_tx.send(NetworkEvent::PeerDiscoverd(peer_id));
+                  let _ = network_event_tx.send(NetworkEvent::PeerDiscoverd(peer_id));
                 }
               }
             }
@@ -181,7 +181,7 @@ impl NetworkManager {
               for (peer_id, multiaddr) in expired {
                 if discovered_peers.remove(&peer_id) {
                   info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
-                  network_event_tx.send(NetworkEvent::PeerExpired(peer_id));
+                  let _ = network_event_tx.send(NetworkEvent::PeerExpired(peer_id));
                 }
               }
             }
