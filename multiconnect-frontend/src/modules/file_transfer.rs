@@ -2,10 +2,7 @@ use std::{any::Any, error::Error, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use libp2p_core::PeerId;
-use multiconnect_protocol::{
-  local::transfer::L9TransferFile,
-  Packet,
-};
+use multiconnect_protocol::{local::transfer::L9TransferFile, Packet};
 use tauri::{Emitter, State};
 use tokio::sync::Mutex;
 

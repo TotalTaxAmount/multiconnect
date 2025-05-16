@@ -29,7 +29,7 @@ impl<T: AsyncRead + AsyncWrite + ?Sized + Debug> AsyncReadWrite for T {}
 type Stream = Box<dyn AsyncReadWrite + Send + Unpin>;
 type SharedStream = Arc<Mutex<Stream>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BehaviourEvent {
   PacketRecived(PeerId, Packet),
   ConnectionOpenRequest(PeerId),
@@ -39,13 +39,11 @@ pub enum BehaviourEvent {
 #[derive(Debug)]
 pub enum HandlerCommand {
   OpenStream,
-  SendPacket(Packet),
   CloseStream,
 }
 
 #[derive(Debug)]
 pub enum HandlerEvent {
-  InboundPacket(Packet),
   InboundStream { stream: Stream, inbound: bool },
   ConnectionClosed,
   Wake,
@@ -144,9 +142,6 @@ impl ConnectionHandler for StreamConnectionHandler {
         self.pending_open = true;
         self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::Wake));
       }
-      HandlerCommand::SendPacket(_packet) => {
-        // TODO??
-      }
       HandlerCommand::CloseStream => todo!(),
     }
   }
@@ -184,17 +179,23 @@ pub struct MulticonnectDataBehaviour {
   queued_events: VecDeque<ToSwarm<BehaviourEvent, HandlerCommand>>,
   packet_rec_rx: mpsc::Receiver<(PeerId, Packet)>,
   packet_rec_tx: mpsc::Sender<(PeerId, Packet)>,
+
+  control_tx: mpsc::Sender<BehaviourEvent>,
+  control_rx: mpsc::Receiver<BehaviourEvent>,
 }
 
 impl MulticonnectDataBehaviour {
   pub fn new() -> Self {
-    let (tx, rx) = mpsc::channel(100);
+    let (tx, rx) = mpsc::channel(10);
+    let (control_tx, control_rx) = mpsc::channel(10);
     Self {
       open_streams: HashMap::new(),
       pending_streams: HashMap::new(),
       queued_events: VecDeque::new(),
       packet_rec_rx: rx,
       packet_rec_tx: tx,
+      control_tx,
+      control_rx,
     }
   }
 
@@ -214,8 +215,12 @@ impl MulticonnectDataBehaviour {
   pub async fn send_packet(&mut self, peer_id: &PeerId, packet: Packet) -> std::io::Result<()> {
     if let Some(s) = self.open_streams.get_mut(peer_id) {
       let bytes = Packet::to_bytes(&packet).unwrap();
-      s.lock().await.write_all(&bytes).await?;
-      s.lock().await.flush().await?;
+      let mut guard = s.lock().await;
+      debug!("Got lock to  send to {}", peer_id);
+      guard.write_all(&bytes).await?;
+      debug!("Wrote");
+      guard.flush().await?;
+      debug!("Flushed");
       Ok(())
     } else {
       warn!("Attempted to send a packet to a peer that is not connected");
@@ -246,25 +251,29 @@ impl MulticonnectDataBehaviour {
   fn spawn_reader(&mut self, stream: SharedStream, peer_id: &PeerId) {
     let tx = self.packet_rec_tx.clone();
 
+    let control_tx = self.control_tx.clone();
     self.open_streams.insert(peer_id.clone(), stream.clone());
 
     let peer_id = peer_id.clone();
     tokio::spawn(async move {
       loop {
         let mut buf = [0u8; 2];
-        let _ = stream.lock().await.read_exact(&mut buf).await;
+        if let Err(e) = stream.lock().await.read_exact(&mut buf).await {
+          error!("Error reading stream: {}", e);
+        };
         let len = u16::from_be_bytes(buf);
         let mut buf = vec![0u8; len as usize];
+        debug!("Packet len: {}", len);
 
         if len == 0 {
           warn!("Stream closed");
+          let _ = control_tx.send(BehaviourEvent::ConnectionClosed(peer_id)).await;
           break;
         }
 
-        debug!("Packet len: {}", len);
-
         match stream.lock().await.read_exact(&mut buf).await {
           Ok(_) => {
+            debug!("Decoding packet");
             let packet = match Packet::from_bytes(&buf) {
               Ok(p) => p,
               Err(e) => {
@@ -323,9 +332,6 @@ impl NetworkBehaviour for MulticonnectDataBehaviour {
     event: libp2p::swarm::THandlerOutEvent<Self>,
   ) {
     match event {
-      HandlerEvent::InboundPacket(packet) => {
-        self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::PacketRecived(peer_id, packet)));
-      }
       HandlerEvent::InboundStream { stream, inbound: false } => {
         self.open_streams.remove(&peer_id);
         self.spawn_reader(Arc::new(Mutex::new(stream)), &peer_id);
@@ -349,6 +355,14 @@ impl NetworkBehaviour for MulticonnectDataBehaviour {
   ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
     while let Poll::Ready(Some((peer_id, packet))) = Pin::new(&mut self.packet_rec_rx).poll_recv(cx) {
       self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::PacketRecived(peer_id, packet)));
+    }
+
+    while let Poll::Ready(Some(event)) = Pin::new(&mut self.control_rx).poll_recv(cx) {
+      if let BehaviourEvent::ConnectionClosed(peer_id) = event.clone() {
+        // TODO: This is stupid
+        self.open_streams.remove(&peer_id);
+      }
+      self.queued_events.push_back(ToSwarm::GenerateEvent(event));
     }
 
     if let Some(e) = self.queued_events.pop_front() {

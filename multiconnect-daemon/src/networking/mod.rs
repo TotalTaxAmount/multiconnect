@@ -128,7 +128,7 @@ impl NetworkManager {
   pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
 
-    let mut send_packet_rx = self.send_command_rx.take().unwrap();
+    let mut command_rx = self.send_command_rx.take().unwrap();
     let network_event_tx = self.network_event_tx.clone();
     let pairing_protocol_event_tx = self.pairing_protocol_event_tx.clone();
 
@@ -217,7 +217,7 @@ impl NetworkManager {
               trace!("Event: {:?}", event);
             },
           },
-          cmd = send_packet_rx.recv() => if let Some(cmd) = cmd {
+          cmd = command_rx.recv() => if let Some(cmd) = cmd {
             match cmd {
                 NetworkCommand::SendPacket(peer_id, packet) => {
                   trace!("Sending {:?} to {}", packet, peer_id);

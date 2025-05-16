@@ -41,8 +41,8 @@ use super::{MulticonnectCtx, MulticonnectModule};
 /// **Pairing**:
 ///  - *Sending*:
 ///     - Receives a L2PeerPairRequest from the frontend
-///     - Add the request to pending requests and send a P2PeerPairRequest to the
-///       target peer
+///     - Add the request to pending requests and send a P2PeerPairRequest to
+///       the target peer
 ///     - Receive a P3PeerPairResponse from a peer and match it to a request
 ///     - If its accepted add it it to paired peers (TODO: Also save to disk to
 ///       auto pair later)
@@ -100,9 +100,6 @@ impl MulticonnectModule for PairingModule {
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
           *online = true;
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
-          if ctx.this_device.peer > peer_id {
-            ctx.open_stream(peer_id).await;
-          }
         } else {
           if ctx.this_device.peer > peer_id {
             debug!("[first] Sending metadata to {}", peer_id);
@@ -240,16 +237,6 @@ impl MulticonnectModule for PairingModule {
       let res_channels = self.res_channels.clone();
       let mut retain_interval = interval(Duration::from_secs(10));
 
-      // {
-      //   let guard = ctx.lock().await;
-      //   let devices = guard.get_devices();
-      //   for (peer_id, (d, _, _)) in devices.iter() {
-      //     if d.get_paired() && guard.get_this_device().peer > *peer_id {
-      //       let _ = pairing_protocol_send.send(NetworkCommand::OpenStream(*peer_id)).await;
-      //     }
-      //   }
-      // }
-
       tokio::spawn(async move {
         loop {
           tokio::select! {
@@ -299,6 +286,7 @@ impl MulticonnectModule for PairingModule {
                         guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                         let mut discovered_devices = discovered_devices.lock().await;
                         discovered_devices.insert(device.peer, device);
+                        guard.open_stream(peer_id).await;
 
                       },
                       // This happens on the initators system
