@@ -35,12 +35,12 @@ impl Default for FrontendConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleConfig {
   #[serde(default)]
-  pub transfer_config: TransferConfig,
+  pub transfer: TransferConfig,
 }
 
 impl Default for ModuleConfig {
   fn default() -> Self {
-    Self { transfer_config: TransferConfig::default() }
+    Self { transfer: TransferConfig::default() }
   }
 }
 

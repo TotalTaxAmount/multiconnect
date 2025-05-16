@@ -3,19 +3,24 @@ use libp2p::PeerId;
 use log::{debug, info, warn};
 use sha2::{Digest, Sha256};
 use std::{
-  collections::HashMap,
+  collections::{HashMap, VecDeque},
   error::Error,
-  fs::{self, File},
-  io::{self, BufReader, Read, Write},
+  io,
   path::{Path, PathBuf},
   str::FromStr,
   sync::Arc,
+  u16,
 };
-use tokio::{fs::OpenOptions, io::AsyncWriteExt, sync::Mutex};
+use tokio::{
+  fs::{self, File, OpenOptions},
+  io::{AsyncReadExt, AsyncWriteExt, BufReader},
+  sync::{broadcast, Mutex, Notify},
+};
 use uuid::Uuid;
 
 use multiconnect_protocol::{
-  local::transfer::{L10TransferProgress, L11TransferStatus},
+  generated::{P4TransferStart, P5TransferChunk},
+  local::transfer::{l10_transfer_progress, l11_transfer_status, L10TransferProgress, L11TransferStatus},
   Packet,
 };
 
@@ -24,36 +29,40 @@ use crate::{networking::NetworkEvent, FrontendEvent};
 use super::{MulticonnectCtx, MulticonnectModule};
 
 pub struct FileTransferModule {
-  active_transfers: Arc<Mutex<HashMap<Uuid, FileTransferState>>>,
+  incoming_transfers: Arc<Mutex<HashMap<Uuid, FileTransfer>>>,
+  outgoing_transfer_tx: broadcast::Sender<FileTransfer>,
+  outgoing_transfer_rx: broadcast::Receiver<FileTransfer>,
 }
 
-struct FileTransferState {
+#[derive(Debug, Clone)]
+struct FileTransfer {
   total_len: usize,
   processed_len: usize,
-  source: PeerId,
+  peer: PeerId, // Sender or recivers
   file: String,
   hash: String,
 }
 
-impl FileTransferState {
-  pub fn new(len: usize, source: PeerId, file: impl Into<String>, hash: impl Into<String>) -> Self {
-    Self { total_len: len, processed_len: 0, source, file: file.into(), hash: hash.into() }
+impl FileTransfer {
+  pub fn new(len: usize, peer: PeerId, file: impl Into<String>, hash: impl Into<String>) -> Self {
+    Self { total_len: len, processed_len: 0, peer, file: file.into(), hash: hash.into() }
   }
 }
 
 impl FileTransferModule {
   pub async fn new() -> Self {
-    Self { active_transfers: Arc::new(Mutex::new(HashMap::new())) }
+    let (outgoing_transfer_tx, outgoing_transfer_rx) = broadcast::channel::<FileTransfer>(10);
+    Self { incoming_transfers: Arc::new(Mutex::new(HashMap::new())), outgoing_transfer_rx, outgoing_transfer_tx }
   }
 
-  fn hash_sha256(path: &Path) -> std::io::Result<String> {
-    let file = File::open(path)?;
+  async fn hash_sha256(path: &Path) -> std::io::Result<String> {
+    let file = File::open(path).await?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 4096];
 
     loop {
-      let read = reader.read(&mut buf)?;
+      let read = reader.read(&mut buf).await?;
       if read == 0 {
         break;
       }
@@ -63,7 +72,7 @@ impl FileTransferModule {
     Ok(hex::encode(hasher.finalize()))
   }
 
-  fn create_unique_file<P: AsRef<Path>>(base: P) -> io::Result<PathBuf> {
+  async fn create_unique_file<P: AsRef<Path>>(base: P) -> io::Result<PathBuf> {
     let base = base.as_ref();
     let parent = base.parent().unwrap_or_else(|| Path::new("."));
     let stem = base.file_stem().unwrap_or_default().to_string_lossy();
@@ -78,7 +87,7 @@ impl FileTransferModule {
       c += 1;
     }
 
-    File::create(&path)?;
+    File::create(&path).await?;
     Ok(path)
   }
 }
@@ -90,50 +99,60 @@ impl MulticonnectModule for FileTransferModule {
       match packet {
         Packet::P4TransferStart(packet) => {
           let uuid = Uuid::from_str(&packet.uuid)?;
-          let path = Self::create_unique_file(&packet.file_name)?;
+          let path = Self::create_unique_file(&packet.file_name).await?.join(".tmp");
+
           debug!("File path: {:?}", path);
 
-          self.active_transfers.lock().await.insert(
+          self.incoming_transfers.lock().await.insert(
             uuid,
-            FileTransferState::new(packet.file_size as usize, source, path.to_string_lossy(), packet.signature),
+            FileTransfer::new(packet.file_size as usize, source, path.to_string_lossy(), packet.signature),
           );
         }
         Packet::P5TransferChunk(packet) => {
           let uuid = Uuid::from_str(&packet.uuid)?;
-          if let Some(status) = self.active_transfers.lock().await.get_mut(&uuid) {
+          if let Some(status) = self.incoming_transfers.lock().await.get_mut(&uuid) {
             let path = Path::new(&status.file);
             let mut file = OpenOptions::new().append(true).open(&path).await?;
             if let Ok(len) = file.write(&packet.data).await {
               status.processed_len += len;
 
               if status.processed_len == status.total_len {
-                let sig = Self::hash_sha256(path)?;
+                let sig = Self::hash_sha256(path).await?;
                 if sig == status.hash {
+                  let parent = path.parent().ok_or("Failed to get parent directory")?;
+                  let file_name = path.file_name().ok_or("Failed to get filename")?.to_string_lossy();
+                  let file_name = file_name.strip_suffix(".tmp").ok_or("Expected .tmp suffix")?;
+                  let final_path = parent.join(file_name);
+
+                  tokio::fs::rename(path, &final_path).await?;
                   debug!("Sucessfully saved file");
                   ctx
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                       path.file_name().ok_or("Failed to get filename")?.to_string_lossy().to_string(),
-                      multiconnect_protocol::local::transfer::l11_transfer_status::Status::Ok,
+                      l11_transfer_status::Status::Ok,
                     )))
                     .await;
 
                   // ctx.send_to_peer(, packet)
                 } else {
                   warn!("File signature doesnt match: {} != {}", sig, status.hash);
-                  let _ = fs::remove_file(path);
+                  let _ = fs::remove_file(path).await;
                   ctx
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                       path.file_name().ok_or("Failed to get filename")?.to_string_lossy().to_string(),
-                      multiconnect_protocol::local::transfer::l11_transfer_status::Status::InvalidSig,
+                      l11_transfer_status::Status::InvalidSig,
                     )))
                     .await;
                 }
+
+                self.incoming_transfers.lock().await.remove(&uuid);
               } else {
                 ctx
                   .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
                     path.file_name().ok_or("Failed to get filename")?.to_string_lossy().to_string(),
                     status.total_len as u64,
                     status.processed_len as u64,
+                    l10_transfer_progress::Direction::Inbound,
                   )))
                   .await;
               }
@@ -147,7 +166,7 @@ impl MulticonnectModule for FileTransferModule {
             let uuid = Uuid::from_str(&packet.uuid)?;
             let file_name = Path::new(
               &self
-                .active_transfers
+                .incoming_transfers
                 .lock()
                 .await
                 .remove(&uuid)
@@ -161,7 +180,7 @@ impl MulticonnectModule for FileTransferModule {
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                 file_name,
-                multiconnect_protocol::local::transfer::l11_transfer_status::Status::Ok,
+                l11_transfer_status::Status::Ok,
               )))
               .await;
           }
@@ -170,7 +189,7 @@ impl MulticonnectModule for FileTransferModule {
             let uuid = Uuid::from_str(&packet.uuid)?;
             let file_name = Path::new(
               &self
-                .active_transfers
+                .incoming_transfers
                 .lock()
                 .await
                 .remove(&uuid)
@@ -184,7 +203,7 @@ impl MulticonnectModule for FileTransferModule {
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                 file_name,
-                multiconnect_protocol::local::transfer::l11_transfer_status::Status::InvalidSig,
+                l11_transfer_status::Status::InvalidSig,
               )))
               .await;
           }
@@ -201,20 +220,11 @@ impl MulticonnectModule for FileTransferModule {
     if let FrontendEvent::RecvPacket(packet) = event {
       match packet {
         Packet::L9TransferFile(packet) => {
-          let uuid = Uuid::new_v4();
-          let path = Path::new(&packet.file_path);
-          let hash = Self::hash_sha256(path)?;
-          let size = fs::metadata(path)?.len();
+          let len = fs::metadata(&packet.file_path).await?.len() as usize;
+          let peer_id = PeerId::from_str(&packet.target).unwrap();
+          let hash = Self::hash_sha256(Path::new(&packet.file_path)).await?;
 
-          self.active_transfers.lock().await.insert(
-            uuid,
-            FileTransferState::new(
-              size as usize,
-              ctx.this_device.peer,
-              path.file_name().ok_or("Failed to get filename")?.to_string_lossy(),
-              hash,
-            ),
-          );
+          let _ = self.outgoing_transfer_tx.send(FileTransfer::new(len, peer_id, packet.file_path, hash));
         }
         _ => {}
       }
@@ -223,6 +233,57 @@ impl MulticonnectModule for FileTransferModule {
   }
 
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) -> Result<(), Box<dyn Error>> {
+    let mut outgoing_transfer_rx = self.outgoing_transfer_rx.resubscribe();
+
+    tokio::spawn(async move {
+      loop {
+        if let Ok(transfer) = outgoing_transfer_rx.recv().await {
+          let transfer_uuid = Uuid::new_v4();
+          let path = Path::new(&transfer.file);
+          let chunk_size = u16::MAX as usize - 257;
+
+          let result: Result<(), Box<dyn Error>> = async {
+            ctx
+              .lock()
+              .await
+              .send_to_peer(
+                transfer.peer,
+                Packet::P4TransferStart(P4TransferStart::new(
+                  transfer.total_len as u64,
+                  transfer.file.clone(),
+                  transfer_uuid.to_string(),
+                  transfer.hash,
+                )),
+              )
+              .await;
+
+            let mut file = File::open(path).await?;
+            let mut buf = vec![0u8; chunk_size];
+
+            loop {
+              let read = file.read(&mut buf).await?;
+              if read == 0 {
+                break;
+              }
+
+              let data = buf[..read].to_vec();
+              ctx
+                .lock()
+                .await
+                .send_to_peer(transfer.peer.clone(), Packet::P5TransferChunk(P5TransferChunk::new(transfer_uuid, data)))
+                .await;
+            }
+
+            Ok(())
+          }
+          .await;
+
+          if let Err(e) = result {
+            warn!("Failed to send file {} to peer {}: {}", transfer.file, transfer.peer, e);
+          }
+        }
+      }
+    });
     Ok(())
   }
 }

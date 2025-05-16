@@ -1,4 +1,4 @@
-use std::{any::Any, collections::HashMap, str::FromStr, sync::Arc};
+use std::{any::Any, collections::HashMap, error::Error, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use libp2p_core::PeerId;
@@ -39,7 +39,7 @@ impl PairingModule {
     if let Some(source) = self.pending.remove(&uuid) {
       debug!("Sending pairing response: uuid = {}, accepted = {}", uuid, accepted);
       if accepted {
-        let _ = ctx.app.emit("peer-expired", source.peer); // Clear device from discovred devices
+        let _ = ctx.app.emit("pairing/peer-expired", source.peer); // Clear device from discovred devices
       }
       ctx.send_packet(Packet::L3PeerPairResponse(L3PeerPairResponse::new(accepted, uuid))).await;
     }
@@ -48,51 +48,53 @@ impl PairingModule {
 
 #[async_trait]
 impl FrontendModule for PairingModule {
-  async fn init(&mut self, _ctx: Arc<Mutex<FrontendCtx>>) {}
+  async fn init(&mut self, _ctx: Arc<Mutex<FrontendCtx>>) -> Result<(), Box<dyn Error>> {
+    Ok(())
+  }
 
-  async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx) {
+  async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx) -> Result<(), Box<dyn Error>> {
     match packet {
       Packet::L2PeerPairRequest(packet) => {
         debug!("Received pairing request packet");
-        let source = bincode::deserialize::<Device>(&packet.device).unwrap();
-        let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+        let source = bincode::deserialize::<Device>(&packet.device)?;
+        let uuid = Uuid::from_str(&packet.req_uuid)?;
         self.pending.insert(uuid, source.clone());
-        ctx.app.emit("peer-pair-request", (source, uuid.to_string())).unwrap();
+        ctx.app.emit("pairing/peer-pair-request", (source, uuid.to_string()))?;
       }
       Packet::L3PeerPairResponse(packet) => {
         debug!("Received pairing response");
-        let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
+        let uuid = Uuid::from_str(&packet.req_uuid)?;
         if let Some(_source) = self.pending.remove(&uuid) {
           // if packet.accepted {
           //   let _ = ctx.app.emit("peer-expired", source.peer);
           // }
-          let _ = ctx.app.emit("pair-response", (packet.req_uuid, packet.accepted));
+          let _ = ctx.app.emit("pairing/pair-response", (packet.req_uuid, packet.accepted));
         } else {
           warn!("No request for response")
         }
       }
       Packet::L0PeerFound(packet) => {
-        let device = bincode::deserialize::<Device>(&packet.device).unwrap();
+        let device = bincode::deserialize::<Device>(&packet.device)?;
         debug!("Received peer found: device = {:?}", device);
-        if let Err(e) = ctx.app.emit("peer-found", device) {
+        if let Err(e) = ctx.app.emit("pairing/peer-found", device) {
           error!("Failed to emit: {}", e);
         }
       }
       Packet::L1PeerExpired(packet) => {
-        let _ = ctx.app.emit("peer-expired", packet.peer_id);
+        let _ = ctx.app.emit("pairing/peer-expired", packet.peer_id);
       }
       Packet::L7DeviceStatus(packet) => {
         // Only for paired devices
-        let device: Device = bincode::deserialize::<Device>(&packet.device).unwrap();
+        let device: Device = bincode::deserialize::<Device>(&packet.device)?;
 
-        let _ = ctx.app.emit("device-status", (&device, packet.online, packet.last_seen));
+        let _ = ctx.app.emit("pairing/device-status", (&device, packet.online, packet.last_seen));
         self.devices.insert(device.peer, (device, packet.online, packet.last_seen));
       }
       Packet::L8DeviceStatusUpdate(packet) => {
         // Only for paired devices
         debug!("Received device status update for peer {}", packet.peer_id);
 
-        let peer_id = PeerId::from_str(&packet.peer_id).unwrap();
+        let peer_id = PeerId::from_str(&packet.peer_id)?;
         if let Some(entry) = self.devices.get_mut(&peer_id) {
           if let Some(device_bytes) = &packet.device {
             if let Ok(device) = bincode::deserialize::<Device>(device_bytes) {
@@ -108,13 +110,15 @@ impl FrontendModule for PairingModule {
             entry.2 = last_seen;
           }
 
-          let _ = ctx.app.emit("device-status", (&entry.0, entry.1, entry.2));
+          let _ = ctx.app.emit("pairing/device-status", (&entry.0, entry.1, entry.2));
         } else {
           debug!("Device status update ignored: peer {} not in device list", peer_id);
         }
       }
       _ => {}
     }
+
+    Ok(())
   }
 
   fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -134,7 +138,7 @@ pub async fn send_pairing_request(manager: State<'_, FrontendModuleManager>, tar
       return Ok(uuid.to_string());
     }
     Err("Already paired")
-    // Ok(uuid.unwrap().to_string())
+    // Ok(uuid?.to_string())
   })
 }
 

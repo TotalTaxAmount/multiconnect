@@ -50,7 +50,7 @@
   }
 
   onMount(async () => {
-    listen("device-status", (event: any) => {
+    listen("pairing/device-status", (event: any) => {
       const [device, online, last_seen] = event.payload as [
         Device,
         boolean,
@@ -63,20 +63,20 @@
       upsert(pairedDevices, device, online, last_seen);
     });
 
-    listen("peer-pair-request", (event: any) => {
+    listen("pairing/peer-pair-request", (event: any) => {
       const [device, uuid] = event.payload as [Device, string];
       console.debug(`Pair request: device = ${device}, uuid = ${uuid}`);
       peerPairRequest.set({ device, uuid });
     });
 
-    listen("peer-found", (event: any) => {
+    listen("pairing/peer-found", (event: any) => {
       const device = event.payload as Device;
       console.debug(`Device found: device = ${device}`);
 
       discovered.update((m) => m.set(device.peer, device));
     });
 
-    listen("peer-expired", (event: any) => {
+    listen("pairing/peer-expired", (event: any) => {
       const peerId = event.payload as string;
       console.debug(`Device expired: id = ${peerId}`);
 
@@ -86,7 +86,7 @@
       });
     });
 
-    listen("pair-response", async (event: any) => {
+    listen("pairing/pair-response", async (event: any) => {
       const [uuid, accepted] = event.payload as [string, boolean];
       console.log(`req is ${uuid} ${accepted}`);
 

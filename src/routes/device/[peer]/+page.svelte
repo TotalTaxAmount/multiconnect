@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import FileTransfer from "$lib/components/modules/FileTransfer.svelte";
   import { pairedDevices } from "$lib/stores";
   import { get } from "svelte/store";
 
@@ -42,6 +43,8 @@
 
     <div class="mt-6">
       <h2 class="text-xl font-semibold mb-2">Modules</h2>
+      <!-- Modules here -->
+      <FileTransfer {peerId} />
     </div>
   {:else}
     <p class="text-red-500">Device not found or no longer paired.</p>

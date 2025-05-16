@@ -305,9 +305,7 @@ impl MulticonnectModule for PairingModule {
                       Packet::P3PeerPairResponse(packet) => {
                         info!("Received paring response: uuid = {}, accepted = {}", packet.req_uuid, packet.accepted);
                         let uuid = Uuid::from_str(&packet.req_uuid).unwrap();
-                        debug!("Why");
                         let mut pending_requests = pending_requests.lock().await;
-                        debug!("No RC pls");
                         if let Some((_, Packet::L2PeerPairRequest(req), _)) = pending_requests.remove(&uuid) {
                           debug!("Found request for response");
                           let mut guard = ctx.lock().await;

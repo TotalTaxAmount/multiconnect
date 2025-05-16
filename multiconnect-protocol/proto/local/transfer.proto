@@ -5,7 +5,8 @@ package multiconnect.local.transfer;
 
 message L9TransferFile {
   required uint32 id = 1;
-  required string file_path = 2;
+  required string target = 2;
+  required string file_path = 3;
 }
 
 message L10TransferProgress {
@@ -13,6 +14,12 @@ message L10TransferProgress {
   required string file_name = 2;
   required uint64 total = 3;
   required uint64 done = 4;
+  required Direction direction = 5;
+
+  enum Direction {
+    INBOUND = 0;
+    OUTBOUND = 1;
+  }
 }
 
 message L11TransferStatus {

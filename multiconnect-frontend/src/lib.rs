@@ -4,6 +4,7 @@ mod modules;
 use argh::FromArgs;
 use daemon::Daemon;
 use modules::{
+  file_transfer::{self, FileTransferModule},
   pairing::{self, PairingModule},
   FrontendModuleManager,
 };
@@ -28,6 +29,7 @@ pub struct FrontendArgs {
 
 pub fn run(port: u16) {
   tauri::Builder::default()
+    .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
     .setup(move |app| {
       let handle = app.handle();
@@ -38,6 +40,7 @@ pub fn run(port: u16) {
           let mut manager = FrontendModuleManager::new(daemon, handle.clone());
           // Initialize modules
           manager.register(PairingModule::new());
+          manager.register(FileTransferModule);
 
           manager.init().await;
           app.manage(manager);
@@ -51,6 +54,7 @@ pub fn run(port: u16) {
       pairing::send_pairing_request,
       pairing::refresh_devices,
       pairing::send_pairing_response,
+      file_transfer::send_file
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

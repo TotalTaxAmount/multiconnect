@@ -1,7 +1,7 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use multiconnect_config::ConfigManager;
 use multiconnect_daemon::{
-  modules::{pairing::PairingModule, ModuleManager},
+  modules::{file_transfer::FileTransferModule, pairing::PairingModule, ModuleManager},
   networking::NetworkManager,
   Daemon, MulticonnectArgs,
 };
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     PairingModule::new(network_manager.send_command_channel(), network_manager.get_mc_event_recv().unwrap()).await;
   let module_manager = Box::leak(Box::new(ModuleManager::new(network_manager, daemon.clone()).await));
   module_manager.register(pairing_module);
-  // module_manager.register(Discovery);
+  module_manager.register(FileTransferModule::new().await);
 
   let _ = module_manager.start().await;
   Ok(())

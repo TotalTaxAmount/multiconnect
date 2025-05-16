@@ -1,12 +1,15 @@
+pub mod file_transfer;
 pub mod pairing;
 
 use std::{
   any::{Any, TypeId},
   collections::HashMap,
+  error::Error,
   sync::Arc,
 };
 
 use async_trait::async_trait;
+use log::warn;
 use multiconnect_protocol::Packet;
 use tauri::{AppHandle, Wry};
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -54,8 +57,8 @@ impl FrontendCtx {
 
 #[async_trait]
 pub trait FrontendModule: Send + Sync + Any {
-  async fn init(&mut self, ctx: Arc<Mutex<FrontendCtx>>);
-  async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx);
+  async fn init(&mut self, ctx: Arc<Mutex<FrontendCtx>>) -> Result<(), Box<dyn Error>>;
+  async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx) -> Result<(), Box<dyn Error>>;
 
   fn as_any_mut(&mut self) -> &mut dyn Any;
   fn as_any(&self) -> &dyn Any;
@@ -92,7 +95,9 @@ impl FrontendModuleManager {
 
   pub async fn init(&self) {
     for module in self.modules.values() {
-      module.lock().await.init(self.ctx.clone()).await;
+      if let Err(e) = module.lock().await.init(self.ctx.clone()).await {
+        warn!("Error in module (init): {}", e);
+      }
     }
 
     let modules = self.modules.clone();
@@ -105,7 +110,9 @@ impl FrontendModuleManager {
           packet = ch.recv() => if let Ok(packet) = packet {
             let mut ctx = ctx.lock().await;
             for module in modules.values() {
-              module.lock().await.on_packet(packet.clone(), &mut ctx).await;
+              if let Err(e) = module.lock().await.on_packet(packet.clone(), &mut ctx).await {
+                warn!("Error in module (on_packet): {}", e);
+              }
             }
           },
         }

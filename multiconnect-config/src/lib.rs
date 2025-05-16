@@ -28,7 +28,7 @@ pub struct Config {
   #[serde(default)]
   pub frontend: FrontendConfig,
   #[serde(default)]
-  pub moduled: ModuleConfig,
+  pub modules: ModuleConfig,
 }
 
 impl ConfigManager {

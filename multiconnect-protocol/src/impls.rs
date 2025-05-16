@@ -1,13 +1,21 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+  path::Path,
+  str::FromStr,
+  time::{SystemTime, UNIX_EPOCH},
+};
 
 use libp2p::PeerId;
 use rand::rand_core::impls;
 use uuid::Uuid;
 
 use crate::{
+  generated::{P4TransferStart, P5TransferChunk},
   local::{
     peer::*,
-    transfer::{l11_transfer_status::Status, L10TransferProgress, L11TransferStatus, L9TransferFile},
+    transfer::{
+      l10_transfer_progress::Direction, l11_transfer_status::Status, L10TransferProgress, L11TransferStatus,
+      L9TransferFile,
+    },
   },
   p2p::{peer::*, *},
   shared::peer::*,
@@ -36,6 +44,18 @@ impl P2PeerPairRequest {
 impl P3PeerPairResponse {
   pub fn new(req_id: Uuid, accepted: bool) -> Self {
     Self { id: Packet::create_id(), req_uuid: req_id.to_string(), accepted }
+  }
+}
+
+impl P4TransferStart {
+  pub fn new(file_size: u64, file_name: String, uuid: String, signature: String) -> Self {
+    Self { id: Packet::create_id(), file_size, file_name, uuid, signature }
+  }
+}
+
+impl P5TransferChunk {
+  pub fn new(uuid: Uuid, data: Vec<u8>) -> Self {
+    Self { id: Packet::create_id(), uuid: uuid.to_string(), data }
   }
 }
 
@@ -110,14 +130,14 @@ impl L8DeviceStatusUpdate {
 }
 
 impl L9TransferFile {
-  pub fn new(file_path: String) -> Self {
-    Self { id: Packet::create_id(), file_path }
+  pub fn new(target: PeerId, file_path: String) -> Self {
+    Self { id: Packet::create_id(), target: target.to_string(), file_path }
   }
 }
 
 impl L10TransferProgress {
-  pub fn new(file_name: String, total: u64, done: u64) -> Self {
-    Self { id: Packet::create_id(), file_name, total, done }
+  pub fn new(file_name: String, total: u64, done: u64, direction: Direction) -> Self {
+    Self { id: Packet::create_id(), file_name, total, done, direction: direction.into() }
   }
 }
 

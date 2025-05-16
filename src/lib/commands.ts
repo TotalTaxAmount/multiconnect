@@ -26,6 +26,11 @@ export async function refreshDevices() {
   await invoke('refresh_devices');
 }
 
+export async function sendFile(target: String, file_path: String) {
+  await invoke('send_file', { target, file_path })
+  
+}
+
 export async function getTheme(): Promise<string> {
    return await invoke('get_theme');
 }
