@@ -44,7 +44,7 @@ pub enum HandlerCommand {
 
 #[derive(Debug)]
 pub enum HandlerEvent {
-  InboundStream { stream: Stream, inbound: bool },
+  PendingStream { stream: Stream, inbound: bool },
   ConnectionClosed,
   Wake,
 }
@@ -160,16 +160,20 @@ impl ConnectionHandler for StreamConnectionHandler {
         let stream = fni.protocol;
         self
           .pending_events
-          .push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream { stream, inbound: true }));
+          .push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::PendingStream { stream, inbound: true }));
       }
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(fno) => {
         let stream = fno.protocol;
         self
           .pending_events
-          .push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::InboundStream { stream, inbound: false }));
+          .push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::PendingStream { stream, inbound: false }));
       }
       _ => {}
     }
+  }
+
+  fn poll_close(&mut self, _: &mut std::task::Context<'_>) -> Poll<Option<Self::ToBehaviour>> {
+    Poll::Ready(None)
   }
 }
 
@@ -215,6 +219,7 @@ impl MulticonnectDataBehaviour {
   pub async fn send_packet(&mut self, peer_id: &PeerId, packet: Packet) -> std::io::Result<()> {
     if let Some(s) = self.open_streams.get_mut(peer_id) {
       let bytes = Packet::to_bytes(&packet).unwrap();
+      debug!("Sending packet to {}", peer_id);
       let mut guard = s.lock().await;
       debug!("Got lock to  send to {}", peer_id);
       guard.write_all(&bytes).await?;
@@ -236,7 +241,8 @@ impl MulticonnectDataBehaviour {
   pub fn approve_inbound_stream(&mut self, peer_id: PeerId) {
     if let Some(s) = self.pending_streams.remove(&peer_id) {
       debug!("Approving stream request from: {}", peer_id);
-      self.open_streams.insert(peer_id, Arc::new(Mutex::new(s)));
+      let shared = Arc::new(Mutex::new(s));
+      self.spawn_handler(shared, &peer_id);
     } else {
       warn!("Attempted to approve a non-pending stream");
     }
@@ -248,7 +254,8 @@ impl MulticonnectDataBehaviour {
     debug!("Denied stream request from: {}", peer_id);
   }
 
-  fn spawn_reader(&mut self, stream: SharedStream, peer_id: &PeerId) {
+  fn spawn_handler(&mut self, stream: SharedStream, peer_id: &PeerId) {
+    debug!("Starting stream handler for {}", peer_id);
     let tx = self.packet_rec_tx.clone();
 
     let control_tx = self.control_tx.clone();
@@ -332,11 +339,12 @@ impl NetworkBehaviour for MulticonnectDataBehaviour {
     event: libp2p::swarm::THandlerOutEvent<Self>,
   ) {
     match event {
-      HandlerEvent::InboundStream { stream, inbound: false } => {
-        self.open_streams.remove(&peer_id);
-        self.spawn_reader(Arc::new(Mutex::new(stream)), &peer_id);
+      HandlerEvent::PendingStream { stream, inbound: false } => {
+        let shared = Arc::new(Mutex::new(stream));
+        debug!("I am the requester");
+        self.spawn_handler(shared, &peer_id);
       }
-      HandlerEvent::InboundStream { stream, inbound: true } => {
+      HandlerEvent::PendingStream { stream, inbound: true } => {
         self.pending_streams.insert(peer_id, stream);
         self.queued_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::ConnectionOpenRequest(peer_id)));
       }

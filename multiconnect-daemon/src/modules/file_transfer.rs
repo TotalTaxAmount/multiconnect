@@ -218,6 +218,7 @@ impl MulticonnectModule for FileTransferModule {
             let chunk_size = u16::MAX as usize - 257;
 
             let result: Result<(), Box<dyn Error>> = async {
+              debug!("Sending start packet");
               ctx
                 .lock()
                 .await
