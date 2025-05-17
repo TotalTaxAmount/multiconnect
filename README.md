@@ -13,10 +13,15 @@ First clone the repo then cd into it.
 ### Desktop
 
 You can specify the config directory with `MC_CONFIG_DIR=<dir>`. This works on both the client and the daemon.
-<br />
-<br />
-**Daemon**
-<br />
+
+**Requirements**
+
+- Installed [Rust](https://www.rust-lang.org/tools/install)
+- Installed [Yarn](https://classic.yarnpkg.com/lang/en/docs/install/#debian-stable)
+  <br />
+  <br />
+  **Daemon**
+  <br />
 
 ```
 Usage: multiconnectd [-p <port>] [--log-level <log-level>]
@@ -51,5 +56,6 @@ Options:
 ```
 
 ```bash
+$ yarn install # Only have to run this once
 $ cargo tauri dev
 ```
