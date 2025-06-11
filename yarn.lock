@@ -775,10 +775,10 @@ esm-env@^1.2.1, esm-env@^1.2.2:
   resolved "https://registry.yarnpkg.com/esm-env/-/esm-env-1.2.2.tgz#263c9455c55861f41618df31b20cb571fc20b75e"
   integrity sha512-Epxrv+Nr/CaL4ZcFGPJIYLWFom+YeV1DqMLHJoEd9SYRxNbaFruBwfEX/kkHUJf55j2+TUbmDcmuilbP1TmXHA==
 
-esrap@^1.4.6:
-  version "1.4.6"
-  resolved "https://registry.yarnpkg.com/esrap/-/esrap-1.4.6.tgz#d203ce1ee397aa2a6a716a3a2dc8619f83208c6a"
-  integrity sha512-F/D2mADJ9SHY3IwksD4DAXjTt7qt7GWUf3/8RhCNWmC/67tyb55dpimHmy7EplakFaflV0R/PC+fdSPqrRHAQw==
+esrap@^1.4.8:
+  version "1.4.9"
+  resolved "https://registry.yarnpkg.com/esrap/-/esrap-1.4.9.tgz#350362c55d8c83b263edfb0fd48dac95162167de"
+  integrity sha512-3OMlcd0a03UGuZpPeUC1HxR3nA23l+HEyCiZw3b3FumJIN9KphoGzDJKMXI1S72jVS1dsenDyQC0kJlO1U9E1g==
   dependencies:
     "@jridgewell/sourcemap-codec" "^1.4.15"
 
@@ -1241,10 +1241,10 @@ svelte-check@^4.1.7:
     picocolors "^1.0.0"
     sade "^1.7.4"
 
-svelte@^5.28.6:
-  version "5.28.6"
-  resolved "https://registry.yarnpkg.com/svelte/-/svelte-5.28.6.tgz#c6b1501a84a5a463d214ffe06a210c05de0947db"
-  integrity sha512-9qqr7mw8YR9PAnxGFfzCK6PUlNGtns7wVavrhnxyf3fpB1mP/Ol55Z2UnIapsSzNNl3k9qw7cZ22PdE8+xT/jQ==
+svelte@^5.33.19:
+  version "5.33.19"
+  resolved "https://registry.yarnpkg.com/svelte/-/svelte-5.33.19.tgz#4812ff70af2892627de73cb5b4c316d390fa6978"
+  integrity sha512-udmgc1nnGeAgnfVJjOMfSOAqPAKv8N65MWN2kDuxo6BZthTaUcsLh4vP8bdZC0bMXLGn69smSZXgQOeuZBOn4Q==
   dependencies:
     "@ampproject/remapping" "^2.3.0"
     "@jridgewell/sourcemap-codec" "^1.5.0"
@@ -1255,7 +1255,7 @@ svelte@^5.28.6:
     axobject-query "^4.1.0"
     clsx "^2.1.1"
     esm-env "^1.2.1"
-    esrap "^1.4.6"
+    esrap "^1.4.8"
     is-reference "^3.0.3"
     locate-character "^3.0.0"
     magic-string "^0.30.11"
