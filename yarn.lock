@@ -587,9 +587,9 @@
     "@tauri-apps/api" "^2.0.0"
 
 "@tauri-apps/plugin-opener@^2":
-  version "2.2.6"
-  resolved "https://registry.yarnpkg.com/@tauri-apps/plugin-opener/-/plugin-opener-2.2.6.tgz#a4dc328541708d40e3bb969231974353a4ad6983"
-  integrity sha512-bSdkuP71ZQRepPOn8BOEdBKYJQvl6+jb160QtJX/i2H9BF6ZySY/kYljh76N2Ne5fJMQRge7rlKoStYQY5Jq1w==
+  version "2.3.1"
+  resolved "https://registry.yarnpkg.com/@tauri-apps/plugin-opener/-/plugin-opener-2.3.1.tgz#876009e2f693f038f8731cd15a0915aef6c4876e"
+  integrity sha512-ia4EW2x/ux2qYpuBRoo1qHwK9/tPwnXYX8HizrJlyHyd3iJCueI5lC7Oa3y1zaCKLZH5elEFSWunnfar8ejbdg==
   dependencies:
     "@tauri-apps/api" "^2.0.0"
 
