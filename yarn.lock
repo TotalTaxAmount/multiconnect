@@ -177,10 +177,10 @@
   dependencies:
     "@iconify/types" "*"
 
-"@iconify/json@^2.2.338":
-  version "2.2.338"
-  resolved "https://registry.yarnpkg.com/@iconify/json/-/json-2.2.338.tgz#325a589f0573dc9086d18be97bf8228560502cc3"
-  integrity sha512-wKUTEGEQwkgbY+P84c2njj/D9iEXoKr/Gv6Abwnw+tuElkT57JsGfMFAUpZpaKDL5fTD/+noRRA4L10mFOtIYw==
+"@iconify/json@^2.2.356":
+  version "2.2.356"
+  resolved "https://registry.yarnpkg.com/@iconify/json/-/json-2.2.356.tgz#f9e6810b2800264eb0e7fbd2fe0812f9abe41aec"
+  integrity sha512-UVUnPLu154x8oa4GFNU3SPKkKcNbVpdNBLAGDhQFPVin2kf6dK6146WK5vDZsxs+366Mfdy8ZDkbatDqjlTcPw==
   dependencies:
     "@iconify/types" "*"
     pathe "^1.1.2"
