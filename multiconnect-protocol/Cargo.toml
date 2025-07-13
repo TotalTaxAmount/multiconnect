@@ -27,4 +27,4 @@ gethostname = "1.0.2"
 wmi = "0.17.2"
 
 [build-dependencies]
-prost-build = "0.13.5"
+prost-build = "0.14.1"
