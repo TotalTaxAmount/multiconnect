@@ -34,5 +34,5 @@ fern = { version = "0.7.1", features = ["colored"] }
 argh = "0.1.13"
 humantime = "2.2.0"
 async-trait = "0.1.88"
-libp2p-core = "0.43.0"
+libp2p-core = "0.43.1"
 tauri-plugin-dialog = "2"
