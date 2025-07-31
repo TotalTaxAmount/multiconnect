@@ -39,6 +39,6 @@ export async function setTheme(theme: string) {
   await invoke('set_theme', { theme });
 }
 
-export async function streamTest(peer: String) {
-  await invoke('stream_test', { peer });
+export async function debugCmd(cmd: String) {
+  await invoke('debug_cmd', { cmd });
 }

@@ -12,13 +12,11 @@ use crate::{
   FrontendEvent,
 };
 
-pub struct DebugModule {
-  bruh: bool,
-}
+pub struct DebugModule {}
 
 impl DebugModule {
   pub fn new() -> Self {
-    Self { bruh: false }
+    Self {}
   }
 }
 
@@ -27,15 +25,15 @@ impl MulticonnectModule for DebugModule {
   async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     match event {
       FrontendEvent::RecvPacket(packet) => {
-        if let Packet::L1PeerExpired(packet) = packet {
-          let peer_id = PeerId::from_str(&packet.peer_id).unwrap();
-          if !self.bruh {
-            ctx.open_stream(peer_id).await;
-            self.bruh = true;
-          } else {
-            debug!("Sending ping");
-            ctx.send_to_peer(peer_id, Packet::P0Ping(P0Ping::new())).await;
-          }
+        if let Packet::D0Debug(debug) = packet {
+          let (cmd, peer_id) = debug.debug.split_once(':').unwrap();
+          let peer_id = PeerId::from_str(peer_id).unwrap();
+          match cmd {
+            "open-stream" => ctx.open_stream(peer_id).await,
+            "send-ping" => ctx.send_to_peer(peer_id, Packet::P0Ping(P0Ping::new())).await,
+            "close-stream" => ctx.close_stream(peer_id).await,
+            _ => {}
+          };
         }
       }
       _ => {}

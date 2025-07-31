@@ -241,7 +241,7 @@ impl ModuleManager {
                 Action::ApproveStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::ApproveStream(peer_id)).await; },
                 Action::DenyStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::DenyStream(peer_id)).await; },
                 Action::OpenStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::OpenStream(peer_id)).await; },
-                Action::CloseStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::CloseStream(peer_id)); },
+                Action::CloseStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::CloseStream(peer_id)).await; },
             };
           },
         }

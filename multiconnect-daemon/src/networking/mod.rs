@@ -240,7 +240,7 @@ impl NetworkManager {
               },
               NetworkCommand::CloseStream(peer_id) => {
                 debug!("Closing stream for {}", peer_id);
-                todo!()
+                swarm.behaviour_mut().stream_protocol.close_stream(peer_id);
               },
               NetworkCommand::SendPairingProtocolRequest(peer_id, packet) => {
                 debug!("Sending pairing protocol request to {}", peer_id);

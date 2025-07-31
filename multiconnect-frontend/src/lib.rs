@@ -12,7 +12,7 @@ use modules::{
   FrontendModuleManager,
 };
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{local::peer::L1PeerExpired, Packet};
+use multiconnect_protocol::{generated::D0Debug, local::peer::L1PeerExpired, Packet};
 use tauri::{async_runtime, Manager, State};
 use tokio::task;
 
@@ -55,7 +55,7 @@ pub fn run(port: u16) {
     .invoke_handler(tauri::generate_handler![
       set_theme,
       get_theme,
-      stream_test,
+      debug_cmd,
       pairing::send_pairing_request,
       pairing::refresh_devices,
       pairing::send_pairing_response,
@@ -81,9 +81,9 @@ async fn set_theme(theme: String) -> Result<(), ()> {
 }
 
 #[tauri::command]
-async fn stream_test(manager: State<'_, FrontendModuleManager>, peer: String) -> Result<(), ()> {
+async fn debug_cmd(manager: State<'_, FrontendModuleManager>, cmd: String) -> Result<(), ()> {
   with_ctx!(manager, |ctx| {
-    ctx.send_packet(Packet::L1PeerExpired(L1PeerExpired::new(&PeerId::from_str(&peer).unwrap()))).await;
+    ctx.send_packet(Packet::D0Debug(D0Debug::new(cmd))).await;
     Ok(())
   })
 }

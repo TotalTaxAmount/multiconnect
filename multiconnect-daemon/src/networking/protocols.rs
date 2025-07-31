@@ -24,10 +24,10 @@ use libp2p::{
   swarm::{ConnectionHandler, ConnectionHandlerEvent, ConnectionId, NetworkBehaviour, SubstreamProtocol, ToSwarm},
   InboundUpgrade, OutboundUpgrade, PeerId,
 };
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use multiconnect_protocol::Packet;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinHandle};
 
 pub trait AsyncReadWrite: AsyncRead + AsyncWrite + Debug {}
 impl<T: AsyncRead + AsyncWrite + ?Sized + Debug> AsyncReadWrite for T {}
@@ -111,17 +111,25 @@ pub struct StreamProtocolConnectionHandler {
   write_half: Option<WriteHalf<Stream>>,
   packet_recv_tx: mpsc::Sender<Packet>,
   packet_recv_rx: mpsc::Receiver<Packet>,
+  reader: Option<JoinHandle<()>>,
 }
 
 impl StreamProtocolConnectionHandler {
   fn new() -> Self {
     let (packet_recv_tx, packet_recv_rx) = mpsc::channel(10);
-    Self { pending_events: VecDeque::new(), pending_write: None, write_half: None, packet_recv_tx, packet_recv_rx }
+    Self {
+      pending_events: VecDeque::new(),
+      pending_write: None,
+      write_half: None,
+      packet_recv_tx,
+      packet_recv_rx,
+      reader: None,
+    }
   }
 
-  fn spawn_reader(&mut self, mut read_half: ReadHalf<Stream>) {
+  fn start_reader(&mut self, mut read_half: ReadHalf<Stream>) {
     let packet_recv_tx = self.packet_recv_tx.clone();
-    tokio::spawn(async move {
+    self.reader = Some(tokio::spawn(async move {
       debug!("Spawing reader");
       loop {
         // Read the packet len as a u16
@@ -148,7 +156,7 @@ impl StreamProtocolConnectionHandler {
           }
         }
       }
-    });
+    }));
   }
 }
 
@@ -219,24 +227,37 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
   fn on_behaviour_event(&mut self, event: Self::FromBehaviour) {
     match event {
       HandlerCommand::OpenStream => {
-        debug!("Handler opening stream");
-        self.pending_events.push_back(ConnectionHandlerEvent::OutboundSubstreamRequest {
-          protocol: SubstreamProtocol::new(StreamProtocol, ()),
-        });
+        if self.reader.is_none() {
+          debug!("Handler opening stream");
+          self.pending_events.push_back(ConnectionHandlerEvent::OutboundSubstreamRequest {
+            protocol: SubstreamProtocol::new(StreamProtocol, ()),
+          });
+        } else {
+          warn!("Attempted to open already open stream");
+        }
       }
       HandlerCommand::CloseStream => {
+        debug!("Closing stream");
         self.write_half = None;
+        if let Some(handle) = self.reader.take() {
+          debug!("Stopping reader");
+          handle.abort();
+        }
       }
       HandlerCommand::SendPacket { packet } => {
-        if self.pending_write.is_some() {
-          warn!("Overwritting existing pending write");
-        }
-        let bytes = Packet::to_bytes(&packet);
-        match bytes {
-          Ok(b) => self.pending_write = Some(Cursor::new(b)),
-          Err(e) => {
-            error!("Error encoding packet: {}", e);
+        if self.write_half.is_some() {
+          if self.pending_write.is_some() {
+            warn!("Overwritting existing pending write")
           }
+          let bytes = Packet::to_bytes(&packet);
+          match bytes {
+            Ok(b) => self.pending_write = Some(Cursor::new(b)),
+            Err(e) => {
+              error!("Error encoding packet: {}", e);
+            }
+          }
+        } else {
+          warn!("Stream not open to target");
         }
       }
     }
@@ -249,17 +270,15 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
     match event {
       // TODO: Be able to accept/deny streams
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(e) => {
-        debug!("FNI");
         let stream = e.protocol;
         let (read_half, write_half) = (stream as Stream).split();
-        self.spawn_reader(read_half);
+        self.start_reader(read_half);
         self.write_half = Some(write_half);
       }
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(e) => {
-        debug!("FNO");
         let stream = e.protocol;
         let (read_half, write_half) = (stream as Stream).split();
-        self.spawn_reader(read_half);
+        self.start_reader(read_half);
         self.write_half = Some(write_half);
       }
       _ => {}
@@ -303,6 +322,18 @@ impl StreamProtocolBehavior {
       });
     } else {
       error!("Failed to open stream (no connection)");
+    }
+  }
+
+  pub fn close_stream(&mut self, peer_id: PeerId) {
+    if let Some(c_id) = self.connections.get(&peer_id) {
+      self.pending_events.push_back(ToSwarm::NotifyHandler {
+        peer_id,
+        handler: libp2p::swarm::NotifyHandler::One(*c_id),
+        event: HandlerCommand::CloseStream,
+      });
+    } else {
+      error!("Failed to close stream (no connection)");
     }
   }
 }
