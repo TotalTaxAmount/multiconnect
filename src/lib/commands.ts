@@ -36,5 +36,9 @@ export async function getTheme(): Promise<string> {
 }
 
 export async function setTheme(theme: string) {
-  await invoke('set_theme', { theme: theme });
+  await invoke('set_theme', { theme });
+}
+
+export async function streamTest(peer: String) {
+  await invoke('stream_test', { peer });
 }

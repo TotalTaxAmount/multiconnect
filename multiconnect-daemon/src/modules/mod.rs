@@ -1,3 +1,4 @@
+pub mod debug;
 pub mod file_transfer;
 pub mod pairing;
 pub mod store;
@@ -23,6 +24,7 @@ pub enum Action {
   DenyStream(PeerId),
   OpenStream(PeerId),
   CloseStream(PeerId),
+  Dial(PeerId),
 }
 
 /// A module that can be used for features
@@ -78,6 +80,10 @@ impl MulticonnectCtx {
 
   pub async fn approve_inbound_stream(&self, peer_id: PeerId) {
     let _ = self.action_tx.send(Action::ApproveStream(peer_id)).await;
+  }
+
+  pub async fn dial_peer(&self, peer_id: PeerId) {
+    let _ = self.action_tx.send(Action::Dial(peer_id)).await;
   }
 
   pub async fn deny_inbound_stream(&self, peer_id: PeerId) {
@@ -228,10 +234,10 @@ impl ModuleManager {
           },
 
           action = send_packet_rx.recv() => if let Some(action) = action {
-
             match action {
-                Action::SendFrontend(packet)=> { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
-                Action::SendPeer(peer_id,packet)=>{ let _ = send_network_command.send(NetworkCommand::SendPacket(peer_id,packet)).await; },
+                Action::SendFrontend(packet) => { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
+                Action::Dial(peer_id) => { let _ = send_network_command.send(NetworkCommand::Dial(peer_id)).await; },
+                Action::SendPeer(peer_id, packet) =>{ let _ = send_network_command.send(NetworkCommand::SendPacket(peer_id, packet)).await; },
                 Action::ApproveStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::ApproveStream(peer_id)).await; },
                 Action::DenyStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::DenyStream(peer_id)).await; },
                 Action::OpenStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::OpenStream(peer_id)).await; },

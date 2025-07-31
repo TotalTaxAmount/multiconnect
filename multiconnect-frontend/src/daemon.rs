@@ -12,7 +12,6 @@ use tokio::{
 };
 
 pub type SharedDaemon = Arc<Daemon>;
-const PORT: u16 = 10999;
 
 #[derive(Debug)]
 pub struct Daemon {

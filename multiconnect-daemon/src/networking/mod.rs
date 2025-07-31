@@ -13,13 +13,15 @@ use libp2p::{
 use log::{debug, error, info, trace, warn};
 use multiconnect_config::CONFIG;
 use multiconnect_protocol::{Device, Packet};
-use protocols::{BehaviourEvent, MulticonnectDataBehaviour, PairingCodec};
+use protocols::{BehaviourEvent, PairingCodec};
 use tokio::{
   fs::File,
   io::{AsyncReadExt, AsyncWriteExt},
   sync::{broadcast, mpsc},
 };
 use tracing_subscriber::EnvFilter;
+
+use crate::networking::protocols::StreamProtocolBehavior;
 
 /// Has to be seperate because `ResponseChannel` is not `Clone`
 #[derive(Debug)]
@@ -48,6 +50,8 @@ pub enum NetworkEvent {
 /// Commands that can be sent to the swarm
 #[derive(Debug)]
 pub enum NetworkCommand {
+  /// Dial a peer
+  Dial(PeerId),
   /// Send a packet to a peer
   SendPacket(PeerId, Packet),
   /// Approve a inbound stream request
@@ -68,7 +72,7 @@ pub enum NetworkCommand {
 struct MulticonnectBehavior {
   mdns: mdns::tokio::Behaviour,
   pairing_protocol: request_response::Behaviour<PairingCodec>,
-  packet_protocol: protocols::MulticonnectDataBehaviour,
+  stream_protocol: protocols::StreamProtocolBehavior,
 }
 
 impl MulticonnectBehavior {
@@ -78,7 +82,7 @@ impl MulticonnectBehavior {
       Config::default(),
     );
 
-    let packet_protocol = MulticonnectDataBehaviour::new();
+    let stream_protocol = StreamProtocolBehavior::new();
 
     let mdns_config: mdns::Config = mdns::Config {
       ttl: Duration::from_secs(4),
@@ -88,7 +92,7 @@ impl MulticonnectBehavior {
 
     let mdns = mdns::tokio::Behaviour::new(mdns_config, key.public().to_peer_id())?;
 
-    Ok(Self { mdns, pairing_protocol, packet_protocol })
+    Ok(Self { mdns, pairing_protocol, stream_protocol })
   }
 }
 
@@ -201,58 +205,55 @@ impl NetworkManager {
                 }
               }
             }
-            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::PacketRecived(source, packet))) => {
-              debug!("Received multiconnect protocol event from {}", source);
-              let _ = network_event_tx.send(NetworkEvent::PacketReceived(source, packet));
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::StreamProtocol(BehaviourEvent::PacketReceived { peer_id, packet })) => {
+              debug!("Received multiconnect protocol event from {}", peer_id);
+              let _ = network_event_tx.send(NetworkEvent::PacketReceived(peer_id, packet));
             }
-            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionOpenRequest(peer))) => {
-              debug!("Stream open request from {}", peer);
-              let _ = network_event_tx.send(NetworkEvent::ConnectionOpenRequest(peer));
-            }
-            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionClosed(peer))) => {
-              info!("Channel to {} closed", peer);
-              let _ = network_event_tx.send(NetworkEvent::ConnectionClosed(peer));
-            }
+            // SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionOpenRequest(peer))) => {
+            //   debug!("Stream open request from {}", peer);
+            //   let _ = network_event_tx.send(NetworkEvent::ConnectionOpenRequest(peer));
+            // }
+            // SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionClosed(peer))) => {
+            //   info!("Channel to {} closed", peer);
+            //   let _ = network_event_tx.send(NetworkEvent::ConnectionClosed(peer));
+            // }
             _ => {
               trace!("Event: {:?}", event);
             },
           },
           cmd = command_rx.recv() => if let Some(cmd) = cmd {
             match cmd {
-                NetworkCommand::SendPacket(peer_id, packet) => {
-                  trace!("Sending {:?} to {}", packet, peer_id);
-                  if let Err(e) = swarm.behaviour_mut().packet_protocol.send_packet(&peer_id, packet).await {
-                    error!("Error sending packet to {}: {}", peer_id, e);
-                  };
-                },
-                NetworkCommand::ApproveStream(peer_id) => {
-                  debug!("Approving stream for {}", peer_id);
-                  let _ = swarm.behaviour_mut().packet_protocol.approve_inbound_stream(peer_id);
-                },
-                NetworkCommand::DenyStream(peer_id) => {
-                  debug!("Denying stream for {}", peer_id);
-                  let _ = swarm.behaviour_mut().packet_protocol.deny_inbound_stream(&peer_id);
-                },
-                NetworkCommand::OpenStream(peer_id) => {
-                  debug!("Initation stream open for {}", peer_id);
-                  let _ = swarm.behaviour_mut().packet_protocol.open_stream(peer_id);
-                },
-                NetworkCommand::CloseStream(peer_id) => {
-                  debug!("Closing stream for {}", peer_id);
-                  todo!()
-                },
-                NetworkCommand::SendPairingProtocolRequest(peer_id, packet) => {
-                  debug!("Sending pairing protocol request to {}", peer_id);
-                  let _ = swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
-                },
-                NetworkCommand::SendPairingProtocolResponse(ch, packet) => {
-                  if ch.is_open() {
-                    debug!("Sending pairing protocl response");
-                    let _ = swarm.behaviour_mut().pairing_protocol.send_response(ch, packet);
-                  } else {
-                    warn!("Cannot send response on closed channel");
-                  }
+              NetworkCommand::Dial(peer_id) => {
+                debug!("Dialing peer");
+                if let Err(e) = swarm.dial(peer_id) {
+                  error!("Error dialing peer: {}", e)
                 }
+              },
+              NetworkCommand::SendPacket(peer_id, packet) => {
+                debug!("Sending {:?} to {}", packet, peer_id);
+                swarm.behaviour_mut().stream_protocol.send_packet(peer_id, packet)
+              },
+              NetworkCommand::ApproveStream(peer_id) => {},
+              NetworkCommand::DenyStream(peer_id) => {},
+              NetworkCommand::OpenStream(peer_id) => {
+                swarm.behaviour_mut().stream_protocol.open_stream(peer_id);
+              },
+              NetworkCommand::CloseStream(peer_id) => {
+                debug!("Closing stream for {}", peer_id);
+                todo!()
+              },
+              NetworkCommand::SendPairingProtocolRequest(peer_id, packet) => {
+                debug!("Sending pairing protocol request to {}", peer_id);
+                let _ = swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
+              },
+              NetworkCommand::SendPairingProtocolResponse(ch, packet) => {
+                if ch.is_open() {
+                  debug!("Sending pairing protocl response");
+                  let _ = swarm.behaviour_mut().pairing_protocol.send_response(ch, packet);
+                } else {
+                  warn!("Cannot send response on closed channel");
+                }
+              }
             }
           },
         }

@@ -7,7 +7,10 @@ use multiconnect_protocol::{
   local::peer::{
     L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L7DeviceStatus, L8DeviceStatusUpdate,
   },
-  p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
+  p2p::{
+    peer::{P2PeerPairRequest, P3PeerPairResponse},
+    P0Ping,
+  },
   shared::peer::S1PeerMeta,
   Device, Packet, SavedDevice,
 };
@@ -100,6 +103,10 @@ impl MulticonnectModule for PairingModule {
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
           *online = true;
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
+
+          if ctx.this_device.peer > peer_id {
+            ctx.dial_peer(peer_id).await;
+          }
         } else {
           if ctx.this_device.peer > peer_id {
             debug!("[first] Sending metadata to {}", peer_id);
