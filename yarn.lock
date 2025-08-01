@@ -357,6 +357,11 @@
   resolved "https://registry.yarnpkg.com/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.40.0.tgz#fd92d31a2931483c25677b9c6698106490cbbc76"
   integrity sha512-lpPE1cLfP5oPzVjKMx10pgBmKELQnFJXHgvtHCtuJWOv8MxqdEIMNtgHgBFf7Ea2/7EuVwa9fodWUfXAlXZLZQ==
 
+"@standard-schema/spec@^1.0.0":
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/@standard-schema/spec/-/spec-1.0.0.tgz#f193b73dc316c4170f2e82a881da0f550d551b9c"
+  integrity sha512-m2bOd0f2RT9k8QJx1JN85cZYyH1RqFBdlwtkSlf4tBDYLCiiZnv1fIIwacK6cqwXavOydf0NPToMQgpKq+dVlA==
+
 "@sveltejs/acorn-typescript@^1.0.5":
   version "1.0.5"
   resolved "https://registry.yarnpkg.com/@sveltejs/acorn-typescript/-/acorn-typescript-1.0.5.tgz#f518101d1b2e12ce80854f1cd850d3b9fb91d710"
@@ -367,11 +372,12 @@
   resolved "https://registry.yarnpkg.com/@sveltejs/adapter-static/-/adapter-static-3.0.8.tgz#f23ee99a9678dbaec58b79d183bc3defbfe99f1a"
   integrity sha512-YaDrquRpZwfcXbnlDsSrBQNCChVOT9MGuSg+dMAyfsAa1SmiAhrA5jUYUiIMC59G92kIbY/AaQOWcBdq+lh+zg==
 
-"@sveltejs/kit@^2.26.0":
-  version "2.26.0"
-  resolved "https://registry.yarnpkg.com/@sveltejs/kit/-/kit-2.26.0.tgz#4a701d0fe69a7f0f5d819c54a1f7f2c7a137f999"
-  integrity sha512-TUxMYoK6Yim4uRIW0L7TXtlEtyLchy90PmInI7d1lPAPMchkBEvN3nVMkn5iTMUobxdLE5nR/YEU/4aYqezMuQ==
+"@sveltejs/kit@^2.27.0":
+  version "2.27.0"
+  resolved "https://registry.yarnpkg.com/@sveltejs/kit/-/kit-2.27.0.tgz#ad46449c920861b183653e45023aa69805efe32b"
+  integrity sha512-pEX1Z2Km8tqmkni+ykIIou+ojp/7gb3M9tpllN5nDWNo9zlI0dI8/hDKFyBwQvb4jYR+EyLriFtrmgJ6GvbnBA==
   dependencies:
+    "@standard-schema/spec" "^1.0.0"
     "@sveltejs/acorn-typescript" "^1.0.5"
     "@types/cookie" "^0.6.0"
     acorn "^8.14.1"
