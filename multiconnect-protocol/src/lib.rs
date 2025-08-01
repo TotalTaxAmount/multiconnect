@@ -137,7 +137,7 @@ impl SavedDevice {
     &self.device
   }
 
-  pub fn get_paired(&self) -> bool {
+  pub fn is_paired(&self) -> bool {
     self.paired
   }
 

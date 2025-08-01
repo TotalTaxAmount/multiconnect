@@ -6,7 +6,7 @@ pub mod store;
 use async_trait::async_trait;
 use libp2p::PeerId;
 use log::{debug, error, warn};
-use multiconnect_protocol::{Device, Packet, SavedDevice};
+use multiconnect_protocol::{local::peer, Device, Packet, SavedDevice};
 use std::{collections::HashMap, error::Error, sync::Arc};
 use store::Store;
 use tokio::sync::{mpsc, Mutex};
@@ -20,11 +20,10 @@ use crate::{
 pub enum Action {
   SendFrontend(Packet),
   SendPeer(PeerId, Packet),
-  ApproveStream(PeerId),
-  DenyStream(PeerId),
   OpenStream(PeerId),
   CloseStream(PeerId),
-  Dial(PeerId),
+  // Update whitelist status for a peer
+  UpdateWhitelist(PeerId, bool),
 }
 
 /// A module that can be used for features
@@ -47,7 +46,7 @@ pub struct MulticonnectCtx {
   this_device: Device,
   /// Device store
   store: Store,
-  /// A list of devices
+  /// A list of devices: Saved device,
   devices: HashMap<PeerId, (SavedDevice, bool, bool)>,
 }
 
@@ -78,18 +77,6 @@ impl MulticonnectCtx {
     let _ = self.action_tx.send(Action::OpenStream(peer_id)).await;
   }
 
-  pub async fn approve_inbound_stream(&self, peer_id: PeerId) {
-    let _ = self.action_tx.send(Action::ApproveStream(peer_id)).await;
-  }
-
-  pub async fn dial_peer(&self, peer_id: PeerId) {
-    let _ = self.action_tx.send(Action::Dial(peer_id)).await;
-  }
-
-  pub async fn deny_inbound_stream(&self, peer_id: PeerId) {
-    let _ = self.action_tx.send(Action::DenyStream(peer_id)).await;
-  }
-
   pub async fn close_stream(&self, peer_id: PeerId) {
     let _ = self.action_tx.send(Action::CloseStream(peer_id)).await;
   }
@@ -118,13 +105,17 @@ impl MulticonnectCtx {
     &self.devices
   }
 
+  pub async fn update_whitelist(&self, peer_id: PeerId, is_whitelisted: bool) {
+    let _ = self.action_tx.send(Action::UpdateWhitelist(peer_id, is_whitelisted)).await;
+  }
+
   /// Get a paired device
   pub fn get_device(&self, id: &PeerId) -> Option<&(SavedDevice, bool, bool)> {
     self.devices.get(id)
   }
 
   pub fn is_paired(&self, id: &PeerId) -> Option<bool> {
-    Some(self.devices.get(id)?.0.get_paired())
+    Some(self.devices.get(id)?.0.is_paired())
   }
 
   /// Add a device to the list of paired devices
@@ -236,12 +227,10 @@ impl ModuleManager {
           action = send_packet_rx.recv() => if let Some(action) = action {
             match action {
                 Action::SendFrontend(packet) => { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
-                Action::Dial(peer_id) => { let _ = send_network_command.send(NetworkCommand::Dial(peer_id)).await; },
                 Action::SendPeer(peer_id, packet) =>{ let _ = send_network_command.send(NetworkCommand::SendPacket(peer_id, packet)).await; },
-                Action::ApproveStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::ApproveStream(peer_id)).await; },
-                Action::DenyStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::DenyStream(peer_id)).await; },
                 Action::OpenStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::OpenStream(peer_id)).await; },
                 Action::CloseStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::CloseStream(peer_id)).await; },
+                Action::UpdateWhitelist(peer_id, is_whitelisted) => { let _ = send_network_command.send(NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted)).await; }
             };
           },
         }

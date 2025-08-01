@@ -4,17 +4,19 @@
 // - Todo: Error type
 
 use std::{
-  collections::{HashMap, VecDeque},
+  collections::{HashMap, HashSet, VecDeque},
   fmt::Debug,
   future::Future,
   io::{self, Cursor},
   pin::Pin,
+  sync::{atomic::AtomicBool, Arc},
   task::Poll,
   time::Duration,
   vec,
 };
 
 use async_trait::async_trait;
+use bincode::de;
 use libp2p::{
   core::UpgradeInfo,
   futures::{
@@ -47,6 +49,7 @@ pub enum HandlerCommand {
   OpenStream,
   CloseStream,
   SendPacket { packet: Packet },
+  UpdateWhitelist { is_whitelisted: bool },
 }
 
 #[derive(Debug)]
@@ -71,14 +74,13 @@ pub enum ConnectionState {
   Connected { connection_id: ConnectionId },
   Opening { connection_id: ConnectionId },
   Open { connection_id: ConnectionId },
-  Requested,
-  WaitingResponse,
 }
 
 #[derive(Debug)]
 pub enum BehaviourEvent {
   PacketReceived { peer_id: PeerId, packet: Packet },
   StreamClosed { peer_id: PeerId, reason: StreamCloseReason },
+  StreamOpend { peer_id: PeerId },
 }
 
 #[derive(Error, Debug)]
@@ -141,6 +143,7 @@ pub struct StreamProtocolConnectionHandler {
   packet_recv_tx: mpsc::Sender<Packet>,
   packet_recv_rx: mpsc::Receiver<Packet>,
   is_stream_open: bool,
+  is_whitelisted: bool,
 }
 
 impl StreamProtocolConnectionHandler {
@@ -155,6 +158,7 @@ impl StreamProtocolConnectionHandler {
       packet_recv_tx,
       packet_recv_rx,
       is_stream_open: false,
+      is_whitelisted: false,
     }
   }
 
@@ -360,6 +364,10 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
           warn!("Cannot send packet: stream not open");
         }
       }
+      HandlerCommand::UpdateWhitelist { is_whitelisted } => {
+        debug!("Updating whitelist status to: {}", is_whitelisted);
+        self.is_whitelisted = is_whitelisted;
+      }
     }
   }
 
@@ -370,13 +378,17 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
     match event {
       // TODO: Be able to accept/deny streams
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(e) => {
-        debug!("Inbound stream established");
-        let stream = e.protocol;
-        let (read_half, write_half) = (stream as Stream).split();
-        self.start_reader(read_half);
-        self.write_half = Some(write_half);
+        if self.is_whitelisted {
+          debug!("Inbound stream established");
+          let stream = e.protocol;
+          let (read_half, write_half) = (stream as Stream).split();
+          self.start_reader(read_half);
+          self.write_half = Some(write_half);
 
-        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::StreamOpened));
+          self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::StreamOpened));
+        } else {
+          warn!("Denied non-whitelisted stream open request");
+        }
       }
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(e) => {
         debug!("Outbound stream established");
@@ -400,15 +412,33 @@ pub struct StreamProtocolBehavior {
   pending_events: VecDeque<ToSwarm<BehaviourEvent, HandlerCommand>>,
   connection_states: HashMap<PeerId, ConnectionState>,
   peer_addrs: HashMap<PeerId, Multiaddr>,
+  whitelisted_peers: HashSet<PeerId>,
 }
 
 impl StreamProtocolBehavior {
   pub fn new() -> Self {
-    Self { pending_events: VecDeque::new(), peer_addrs: HashMap::new(), connection_states: HashMap::new() }
+    Self {
+      pending_events: VecDeque::new(),
+      peer_addrs: HashMap::new(),
+      connection_states: HashMap::new(),
+      whitelisted_peers: HashSet::new(),
+    }
   }
 
   pub fn add_peer_address(&mut self, peer_id: PeerId, addr: Multiaddr) {
     self.peer_addrs.insert(peer_id, addr);
+  }
+
+  pub fn remove_peer_address(&mut self, peer_id: &PeerId) {
+    self.peer_addrs.remove(peer_id);
+  }
+
+  pub fn add_whitelisted_peer(&mut self, peer_id: &PeerId) {
+    self.whitelisted_peers.insert(*peer_id);
+  }
+
+  pub fn remove_whitelisted_peer(&mut self, peer_id: &PeerId) {
+    self.whitelisted_peers.remove(peer_id);
   }
 
   pub fn send_packet(&mut self, peer_id: PeerId, packet: Packet) -> Result<(), StreamProtocolError> {
@@ -452,7 +482,7 @@ impl StreamProtocolBehavior {
         debug!("Already dialing {}", peer_id);
         Ok(())
       }
-      Some(ConnectionState::Disconnected) => {
+      Some(ConnectionState::Disconnected) | None => {
         if let Some(addr) = self.peer_addrs.get(&peer_id) {
           debug!("Dialing {} at {}", peer_id, addr);
           self
@@ -465,8 +495,10 @@ impl StreamProtocolBehavior {
         }
       }
       _ => {
-        warn!("No state for {}", peer_id);
-        Err(StreamProtocolError::ConnectionError("No state".to_string()))
+        // debug!("No state for {}", peer_id);
+        todo!()
+
+        // Err(StreamProtocolError::ConnectionError("".to_string()))
       }
     }
   }
@@ -479,7 +511,6 @@ impl StreamProtocolBehavior {
           handler: libp2p::swarm::NotifyHandler::One(*connection_id),
           event: HandlerCommand::CloseStream,
         });
-        self.connection_states.insert(peer_id, ConnectionState::Connected { connection_id: *connection_id });
         Ok(())
       }
       Some(state) => {
@@ -555,6 +586,14 @@ impl NetworkBehaviour for StreamProtocolBehavior {
         let peer_id = connection_established.peer_id;
         let connection_id = connection_established.connection_id;
 
+        if self.whitelisted_peers.contains(&peer_id) {
+          self.pending_events.push_back(ToSwarm::NotifyHandler {
+            peer_id,
+            handler: libp2p::swarm::NotifyHandler::One(connection_id),
+            event: HandlerCommand::UpdateWhitelist { is_whitelisted: true },
+          });
+        }
+
         match self.connection_states.get(&peer_id) {
           Some(ConnectionState::Dialing) => {
             // We where dialing this before
@@ -595,17 +634,16 @@ impl NetworkBehaviour for StreamProtocolBehavior {
       HandlerEvent::StreamOpened => {
         debug!("Stream to {} opened", peer_id);
         self.connection_states.insert(peer_id, ConnectionState::Open { connection_id });
+        self.pending_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::StreamOpend { peer_id }));
       }
       HandlerEvent::StreamClosed { reason } => {
         debug!("Stream to {} closed: {:?}", peer_id, reason);
         match self.connection_states.get(&peer_id) {
-          Some(ConnectionState::Open { connection_id: current_con_id })
-          | Some(ConnectionState::Opening { connection_id: current_con_id }) => {
-            if current_con_id == &connection_id {
-              self.connection_states.insert(peer_id, ConnectionState::Connected { connection_id });
-            }
+          Some(ConnectionState::Open { .. }) | Some(ConnectionState::Opening { .. }) => {
+            self.connection_states.insert(peer_id, ConnectionState::Connected { connection_id });
           }
           _ => {
+            warn!("Peer disconnected (last state: {:?})", self.connection_states.get(&peer_id));
             self.connection_states.insert(peer_id, ConnectionState::Disconnected);
           }
         }

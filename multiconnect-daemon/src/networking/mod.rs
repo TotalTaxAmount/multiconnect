@@ -41,8 +41,6 @@ pub enum NetworkEvent {
   PeerExpired(PeerId),
   /// A packet is recived from a peer
   PacketReceived(PeerId, Packet),
-  /// A peer requests to open a stream
-  ConnectionOpenRequest(PeerId),
   /// A connectio to a peer is closed
   ConnectionClosed(PeerId),
 }
@@ -50,15 +48,8 @@ pub enum NetworkEvent {
 /// Commands that can be sent to the swarm
 #[derive(Debug)]
 pub enum NetworkCommand {
-  /// Dial a peer
-  Dial(PeerId),
   /// Send a packet to a peer
   SendPacket(PeerId, Packet),
-  /// Approve a inbound stream request
-  ApproveStream(PeerId),
-  /// Deny a inbound stream request
-  DenyStream(PeerId),
-  /// Request to open a stream to a peer
   OpenStream(PeerId),
   /// Close a stream to a peer
   CloseStream(PeerId),
@@ -66,6 +57,8 @@ pub enum NetworkCommand {
   SendPairingProtocolRequest(PeerId, Packet),
   /// Send a pairing protocol response (pairing module only)
   SendPairingProtocolResponse(ResponseChannel<Packet>, Packet),
+  /// Update whitelist for a peer
+  UpdateWhitelist(PeerId, bool),
 }
 
 #[derive(NetworkBehaviour)]
@@ -185,6 +178,7 @@ impl NetworkManager {
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mdns(mdns::Event::Expired(expired))) => {
               for (peer_id, multiaddr) in expired {
                 if discovered_peers.remove(&peer_id) {
+                  swarm.behaviour_mut().stream_protocol.remove_peer_address(&peer_id);
                   info!("Expired peer: id = {}, multiaddr = {}", peer_id, multiaddr);
                   let _ = network_event_tx.send(NetworkEvent::PeerExpired(peer_id));
                 }
@@ -210,34 +204,18 @@ impl NetworkManager {
               debug!("Received multiconnect protocol event from {}", peer_id);
               let _ = network_event_tx.send(NetworkEvent::PacketReceived(peer_id, packet));
             }
-            // SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionOpenRequest(peer))) => {
-            //   debug!("Stream open request from {}", peer);
-            //   let _ = network_event_tx.send(NetworkEvent::ConnectionOpenRequest(peer));
-            // }
-            // SwarmEvent::Behaviour(MulticonnectBehaviorEvent::PacketProtocol(BehaviourEvent::ConnectionClosed(peer))) => {
-            //   info!("Channel to {} closed", peer);
-            //   let _ = network_event_tx.send(NetworkEvent::ConnectionClosed(peer));
-            // }
             _ => {
               trace!("Event: {:?}", event);
             },
           },
           cmd = command_rx.recv() => if let Some(cmd) = cmd {
             match cmd {
-              NetworkCommand::Dial(peer_id) => {
-                debug!("Dialing peer");
-                if let Err(e) = swarm.dial(peer_id) {
-                  error!("Error dialing peer: {}", e)
-                }
-              },
               NetworkCommand::SendPacket(peer_id, packet) => {
                 debug!("Sending {:?} to {}", packet, peer_id);
                 if let Err(e) = swarm.behaviour_mut().stream_protocol.send_packet(peer_id, packet) {
                   error!("Error sending packet: {}", e);
                 }
               },
-              NetworkCommand::ApproveStream(peer_id) => {},
-              NetworkCommand::DenyStream(peer_id) => {},
               NetworkCommand::OpenStream(peer_id) => {
                 if let Err(e) = swarm.behaviour_mut().stream_protocol.open_stream(peer_id) {
                   error!("Error opening stream: {}", e);
@@ -259,6 +237,13 @@ impl NetworkManager {
                   let _ = swarm.behaviour_mut().pairing_protocol.send_response(ch, packet);
                 } else {
                   warn!("Cannot send response on closed channel");
+                }
+              }
+              NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted) => {
+                if is_whitelisted {
+                 swarm.behaviour_mut().stream_protocol.add_whitelisted_peer(&peer_id);
+                } else {
+                  swarm.behaviour_mut().stream_protocol.remove_peer_address(&peer_id);
                 }
               }
             }
