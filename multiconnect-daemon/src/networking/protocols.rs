@@ -9,7 +9,9 @@ use std::{
   future::Future,
   io::{self, Cursor},
   pin::Pin,
-  task::{Poll, Waker},
+  task::Poll,
+  time::Duration,
+  vec,
 };
 
 use async_trait::async_trait;
@@ -21,13 +23,20 @@ use libp2p::{
     pin_mut, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
   },
   request_response,
-  swarm::{ConnectionHandler, ConnectionHandlerEvent, ConnectionId, NetworkBehaviour, SubstreamProtocol, ToSwarm},
-  InboundUpgrade, OutboundUpgrade, PeerId,
+  swarm::{
+    dial_opts::DialOpts, ConnectionHandler, ConnectionHandlerEvent, ConnectionId, NetworkBehaviour, SubstreamProtocol,
+    ToSwarm,
+  },
+  InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId,
 };
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use multiconnect_protocol::Packet;
 use thiserror::Error;
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+  sync::{mpsc, oneshot},
+  task::JoinHandle,
+  time::timeout,
+};
 
 pub trait AsyncReadWrite: AsyncRead + AsyncWrite + Debug {}
 impl<T: AsyncRead + AsyncWrite + ?Sized + Debug> AsyncReadWrite for T {}
@@ -43,25 +52,43 @@ pub enum HandlerCommand {
 #[derive(Debug)]
 pub enum HandlerEvent {
   PacketReceived { packet: Packet },
-  ConnectionClose,
+  StreamClosed { reason: StreamCloseReason },
+  StreamOpened,
+}
+
+#[derive(Debug)]
+pub enum StreamCloseReason {
+  RemoteClosed,
+  ReadError(String),
+  WriteError(String),
+  Timeout,
+}
+
+#[derive(Debug)]
+pub enum ConnectionState {
+  Disconnected,
+  Dialing,
+  Connected { connection_id: ConnectionId },
+  Opening { connection_id: ConnectionId },
+  Open { connection_id: ConnectionId },
+  Requested,
+  WaitingResponse,
 }
 
 #[derive(Debug)]
 pub enum BehaviourEvent {
   PacketReceived { peer_id: PeerId, packet: Packet },
+  StreamClosed { peer_id: PeerId, reason: StreamCloseReason },
 }
 
 #[derive(Error, Debug)]
 pub enum StreamProtocolError {
-  #[error("Failed to upgrade")]
-  UpgradeError,
+  #[error("Connection error: {0}")]
+  ConnectionError(String),
+  #[error("IO error: {0}")]
+  Io(#[from] io::Error),
 }
 
-#[derive(Debug)]
-enum StreamStates {
-  PendingOutbound,
-  Active { peer_id: PeerId, stream: Stream },
-}
 #[derive(Debug)]
 pub struct StreamProtocol;
 
@@ -81,7 +108,7 @@ where
 {
   type Output = Stream;
 
-  type Error = ();
+  type Error = StreamProtocolError;
 
   type Future = futures::future::Ready<Result<Self::Output, Self::Error>>;
 
@@ -96,7 +123,7 @@ where
 {
   type Output = Stream;
 
-  type Error = ();
+  type Error = StreamProtocolError;
 
   type Future = futures::future::Ready<Result<Self::Output, Self::Error>>;
 
@@ -107,11 +134,13 @@ where
 
 pub struct StreamProtocolConnectionHandler {
   pending_events: VecDeque<ConnectionHandlerEvent<StreamProtocol, (), HandlerEvent>>,
-  pending_write: Option<Cursor<Vec<u8>>>,
+  pending_writes: VecDeque<Cursor<Vec<u8>>>,
   write_half: Option<WriteHalf<Stream>>,
+  reader_handle: Option<JoinHandle<()>>,
+  close_rx: Option<oneshot::Receiver<StreamCloseReason>>,
   packet_recv_tx: mpsc::Sender<Packet>,
   packet_recv_rx: mpsc::Receiver<Packet>,
-  reader: Option<JoinHandle<()>>,
+  is_stream_open: bool,
 }
 
 impl StreamProtocolConnectionHandler {
@@ -119,44 +148,108 @@ impl StreamProtocolConnectionHandler {
     let (packet_recv_tx, packet_recv_rx) = mpsc::channel(10);
     Self {
       pending_events: VecDeque::new(),
-      pending_write: None,
+      pending_writes: VecDeque::new(),
       write_half: None,
+      close_rx: None,
+      reader_handle: None,
       packet_recv_tx,
       packet_recv_rx,
-      reader: None,
+      is_stream_open: false,
     }
   }
 
-  fn start_reader(&mut self, mut read_half: ReadHalf<Stream>) {
+  fn start_reader(&mut self, read_half: ReadHalf<Stream>) {
     let packet_recv_tx = self.packet_recv_tx.clone();
-    self.reader = Some(tokio::spawn(async move {
-      debug!("Spawing reader");
-      loop {
-        // Read the packet len as a u16
-        let mut buf = [0u8; 2];
-        let _ = read_half.read_exact(&mut buf).await;
-        let len = u16::from_be_bytes(buf);
-        debug!("Packet len: {}", len);
-        if len == 0 {
-          warn!("Recivied packet with len 0");
-          break;
+    let (close_tx, close_rx) = oneshot::channel::<StreamCloseReason>();
+
+    self.close_rx = Some(close_rx);
+    self.is_stream_open = true;
+
+    self.reader_handle = Some(tokio::spawn(async move {
+      debug!("Starting stream reader");
+      let close_reason = Self::read_loop(read_half, packet_recv_tx).await;
+      let _ = close_tx.send(close_reason);
+      debug!("Stream reader finished")
+    }));
+  }
+
+  async fn read_loop(mut read_half: ReadHalf<Stream>, packet_recv_tx: mpsc::Sender<Packet>) -> StreamCloseReason {
+    loop {
+      // let len_result = timeout(Duration::from_secs(10), async {
+      let mut buf = [0u8; 2];
+      let _ = read_half.read_exact(&mut buf).await;
+      let len = u16::from_be_bytes(buf);
+      // })
+      // .await;
+
+      // let len = match len_result {
+      //   Ok(Ok(len)) => len,
+      //   Ok(Err(e)) => {
+      //     error!("Read error: {}", e);
+      //     return StreamCloseReason::ReadError(e.to_string());
+      //   }
+      //   Err(_) => {
+      //     warn!("Read timeout");
+      //     return StreamCloseReason::Timeout;
+      //   }
+      // };
+
+      if len == 0 {
+        debug!("Received zero-length packet, closing stream");
+        return StreamCloseReason::RemoteClosed;
+      }
+
+      if len > u16::MAX - 2 {
+        error!("Packet too large: {} bytes", len);
+        return StreamCloseReason::ReadError(format!("Packet too large: {}", len));
+      }
+
+      // Read packet data
+      let packet_result = timeout(Duration::from_secs(10), async {
+        let mut buf = vec![0u8; len as usize];
+        read_half.read_exact(&mut buf).await?;
+        Ok::<Vec<u8>, io::Error>(buf)
+      })
+      .await;
+
+      let buf = match packet_result {
+        Ok(Ok(buf)) => buf,
+        Ok(Err(e)) => {
+          error!("Read error: {}", e);
+          return StreamCloseReason::ReadError(e.to_string());
         }
+        Err(_) => {
+          warn!("Read timeout");
+          return StreamCloseReason::Timeout;
+        }
+      };
 
-        // Read the packet
-        let mut buf = vec![0u8; len.into()];
-        let _ = read_half.read_exact(&mut buf).await;
-
-        match Packet::from_bytes(&buf) {
-          Ok(p) => {
-            debug!("Recvied packet: {:?}", p);
-            let _ = packet_recv_tx.send(p).await;
+      match Packet::from_bytes(&buf) {
+        Ok(packet) => {
+          debug!("Received packet: {:?}", packet);
+          if packet_recv_tx.send(packet).await.is_err() {
+            debug!("Packet receiver dropped, closing reader");
+            return StreamCloseReason::RemoteClosed;
           }
-          Err(e) => {
-            error!("Error decoding packet: {}", e);
-          }
+        }
+        Err(e) => {
+          error!("Error decoding packet: {}", e);
+          return StreamCloseReason::ReadError(format!("Decode error: {}", e));
         }
       }
-    }));
+    }
+  }
+
+  fn cleanup(&mut self, reason: StreamCloseReason) {
+    debug!("Cleaning up stream");
+    self.pending_writes.clear();
+    self.write_half = None;
+    self.is_stream_open = false;
+    if let Some(handle) = self.reader_handle.take() {
+      handle.abort();
+    }
+    self.close_rx = None;
+    self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::StreamClosed { reason }));
   }
 }
 
@@ -181,44 +274,58 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
     &mut self,
     cx: &mut std::task::Context<'_>,
   ) -> Poll<ConnectionHandlerEvent<Self::OutboundProtocol, (), Self::ToBehaviour>> {
+    // Check for pending events
     if let Some(event) = self.pending_events.pop_front() {
-      debug!("Poll ready");
       return Poll::Ready(event);
     }
 
-    if let (Some(cursor), Some(w_half)) = (&mut self.pending_write, &mut self.write_half) {
+    // Check for stream close
+    if let Some(rx) = &mut self.close_rx {
+      match Pin::new(rx).poll(cx) {
+        Poll::Ready(Ok(reason)) => {
+          self.cleanup(reason);
+          return Poll::Pending; // cleanup() queued the event
+        }
+        Poll::Ready(Err(_)) => {
+          self.cleanup(StreamCloseReason::ReadError("Close channel dropped".to_string()));
+          return Poll::Pending;
+        }
+        Poll::Pending => {}
+      }
+    }
+
+    // Handle pending writes
+    if let (Some(cursor), Some(w_half)) = (&mut self.pending_writes.get_mut(0), &mut self.write_half) {
       let buf = &cursor.get_ref()[cursor.position() as usize..];
       match Pin::new(w_half).poll_write(cx, buf) {
         Poll::Ready(Ok(n)) => {
           cursor.set_position(cursor.position() + n as u64);
           if cursor.position() as usize >= cursor.get_ref().len() {
-            self.pending_write = None;
+            self.pending_writes.pop_front();
           } else {
             return Poll::Pending; // Wait
           }
         }
         Poll::Ready(Err(e)) => {
           error!("Write failed: {}", e);
-          self.pending_write = None;
-          self.write_half = None;
-          return Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::ConnectionClose));
+          self.cleanup(StreamCloseReason::WriteError(e.to_string()));
         }
         Poll::Pending => return Poll::Pending,
       }
     }
 
+    // Check for received packets
     let recv_fut = self.packet_recv_rx.recv();
     pin_mut!(recv_fut);
 
     // Maybe a little jank
     match recv_fut.poll(cx) {
       Poll::Ready(Some(packet)) => {
-        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::PacketReceived { packet }));
-        Poll::Ready(self.pending_events.pop_back().unwrap())
+        Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::PacketReceived { packet }))
       }
       Poll::Pending => Poll::Pending,
       Poll::Ready(None) => {
-        // ??
+        // self.cleanup(StreamCloseReason::RemoteClosed); // Doesnt work
         Poll::Pending
       }
     }
@@ -227,37 +334,30 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
   fn on_behaviour_event(&mut self, event: Self::FromBehaviour) {
     match event {
       HandlerCommand::OpenStream => {
-        if self.reader.is_none() {
+        if self.reader_handle.is_none() {
           debug!("Handler opening stream");
           self.pending_events.push_back(ConnectionHandlerEvent::OutboundSubstreamRequest {
             protocol: SubstreamProtocol::new(StreamProtocol, ()),
           });
         } else {
-          warn!("Attempted to open already open stream");
+          warn!("Stream already open, ignoring open request");
         }
       }
       HandlerCommand::CloseStream => {
         debug!("Closing stream");
-        self.write_half = None;
-        if let Some(handle) = self.reader.take() {
-          debug!("Stopping reader");
-          handle.abort();
-        }
+        self.cleanup(StreamCloseReason::RemoteClosed);
       }
       HandlerCommand::SendPacket { packet } => {
         if self.write_half.is_some() {
-          if self.pending_write.is_some() {
-            warn!("Overwritting existing pending write")
-          }
           let bytes = Packet::to_bytes(&packet);
           match bytes {
-            Ok(b) => self.pending_write = Some(Cursor::new(b)),
+            Ok(b) => self.pending_writes.push_back(Cursor::new(b)),
             Err(e) => {
               error!("Error encoding packet: {}", e);
             }
           }
         } else {
-          warn!("Stream not open to target");
+          warn!("Cannot send packet: stream not open");
         }
       }
     }
@@ -270,71 +370,153 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
     match event {
       // TODO: Be able to accept/deny streams
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(e) => {
+        debug!("Inbound stream established");
         let stream = e.protocol;
         let (read_half, write_half) = (stream as Stream).split();
         self.start_reader(read_half);
         self.write_half = Some(write_half);
+
+        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::StreamOpened));
       }
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(e) => {
+        debug!("Outbound stream established");
         let stream = e.protocol;
         let (read_half, write_half) = (stream as Stream).split();
         self.start_reader(read_half);
         self.write_half = Some(write_half);
+
+        self.pending_events.push_back(ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::StreamOpened));
       }
       _ => {}
     }
   }
 
   fn connection_keep_alive(&self) -> bool {
-    true
+    self.is_stream_open || !self.pending_events.is_empty()
   }
 }
 
 pub struct StreamProtocolBehavior {
   pending_events: VecDeque<ToSwarm<BehaviourEvent, HandlerCommand>>,
-  connections: HashMap<PeerId, ConnectionId>,
+  connection_states: HashMap<PeerId, ConnectionState>,
+  peer_addrs: HashMap<PeerId, Multiaddr>,
 }
 
 impl StreamProtocolBehavior {
   pub fn new() -> Self {
-    Self { pending_events: VecDeque::new(), connections: HashMap::new() }
+    Self { pending_events: VecDeque::new(), peer_addrs: HashMap::new(), connection_states: HashMap::new() }
   }
 
-  pub fn send_packet(&mut self, peer_id: PeerId, packet: Packet) {
-    if let Some(c_id) = self.connections.get(&peer_id) {
+  pub fn add_peer_address(&mut self, peer_id: PeerId, addr: Multiaddr) {
+    self.peer_addrs.insert(peer_id, addr);
+  }
+
+  pub fn send_packet(&mut self, peer_id: PeerId, packet: Packet) -> Result<(), StreamProtocolError> {
+    if let Some(ConnectionState::Open { connection_id }) = self.connection_states.get(&peer_id) {
+      debug!("Sending packet to {}: {:?}", peer_id, packet);
       self.pending_events.push_back(ToSwarm::NotifyHandler {
         peer_id,
-        handler: libp2p::swarm::NotifyHandler::One(*c_id),
+        handler: libp2p::swarm::NotifyHandler::One(*connection_id),
         event: HandlerCommand::SendPacket { packet },
       });
+      Ok(())
     } else {
-      error!("Failed to send packet (no connection)")
+      error!("No active stream to peer {}", peer_id);
+      Err(StreamProtocolError::ConnectionError("No active stream for peer".to_string()))
     }
   }
 
-  pub fn open_stream(&mut self, peer_id: PeerId) {
+  pub fn open_stream(&mut self, peer_id: PeerId) -> Result<(), StreamProtocolError> {
     debug!("Attemping to open a stream to {}", peer_id);
-    if let Some(c_id) = self.connections.get(&peer_id) {
-      self.pending_events.push_back(ToSwarm::NotifyHandler {
-        peer_id,
-        handler: libp2p::swarm::NotifyHandler::One(*c_id),
-        event: HandlerCommand::OpenStream,
-      });
-    } else {
-      error!("Failed to open stream (no connection)");
+
+    match self.connection_states.get(&peer_id) {
+      Some(ConnectionState::Open { .. }) => {
+        warn!("Stream to {} already open", peer_id);
+        Ok(())
+      }
+      Some(ConnectionState::Opening { .. }) => {
+        debug!("Stream to {} is already being opened", peer_id);
+        Ok(())
+      }
+      Some(ConnectionState::Connected { connection_id }) => {
+        debug!("Opening stream to {}", peer_id);
+        self.pending_events.push_back(ToSwarm::NotifyHandler {
+          peer_id,
+          handler: libp2p::swarm::NotifyHandler::One(*connection_id),
+          event: HandlerCommand::OpenStream,
+        });
+        self.connection_states.insert(peer_id, ConnectionState::Opening { connection_id: *connection_id });
+        Ok(())
+      }
+      Some(ConnectionState::Dialing) => {
+        debug!("Already dialing {}", peer_id);
+        Ok(())
+      }
+      Some(ConnectionState::Disconnected) => {
+        if let Some(addr) = self.peer_addrs.get(&peer_id) {
+          debug!("Dialing {} at {}", peer_id, addr);
+          self
+            .pending_events
+            .push_back(ToSwarm::Dial { opts: DialOpts::peer_id(peer_id).addresses(vec![addr.clone()]).build() });
+          self.connection_states.insert(peer_id, ConnectionState::Dialing);
+          Ok(())
+        } else {
+          Err(StreamProtocolError::ConnectionError(format!("No know address for {}", peer_id)))
+        }
+      }
+      _ => {
+        warn!("No state for {}", peer_id);
+        Err(StreamProtocolError::ConnectionError("No state".to_string()))
+      }
     }
   }
 
-  pub fn close_stream(&mut self, peer_id: PeerId) {
-    if let Some(c_id) = self.connections.get(&peer_id) {
-      self.pending_events.push_back(ToSwarm::NotifyHandler {
-        peer_id,
-        handler: libp2p::swarm::NotifyHandler::One(*c_id),
-        event: HandlerCommand::CloseStream,
-      });
-    } else {
-      error!("Failed to close stream (no connection)");
+  pub fn close_stream(&mut self, peer_id: PeerId) -> Result<(), StreamProtocolError> {
+    match self.connection_states.get(&peer_id) {
+      Some(ConnectionState::Open { connection_id }) => {
+        self.pending_events.push_back(ToSwarm::NotifyHandler {
+          peer_id,
+          handler: libp2p::swarm::NotifyHandler::One(*connection_id),
+          event: HandlerCommand::CloseStream,
+        });
+        self.connection_states.insert(peer_id, ConnectionState::Connected { connection_id: *connection_id });
+        Ok(())
+      }
+      Some(state) => {
+        debug!("Cannot close stream to {}: not open (state: {:?})", peer_id, state);
+        Err(StreamProtocolError::ConnectionError("Stream not open".to_string()))
+      }
+      None => Err(StreamProtocolError::ConnectionError("No stream state for peer".to_string())),
     }
+  }
+
+  pub fn get_connected_peers(&self) -> Vec<PeerId> {
+    self
+      .connection_states
+      .iter()
+      .filter_map(|(peer_id, state)| match state {
+        &ConnectionState::Connected { .. } | &ConnectionState::Opening { .. } | &ConnectionState::Open { .. } => {
+          Some(*peer_id)
+        }
+        _ => None,
+      })
+      .collect()
+  }
+
+  pub fn get_active_streams(&self) -> Vec<PeerId> {
+    self
+      .connection_states
+      .iter()
+      .filter_map(|(peer_id, state)| matches!(state, ConnectionState::Open { .. }).then_some(*peer_id))
+      .collect()
+  }
+
+  pub fn is_stream_active(&self, peer_id: &PeerId) -> bool {
+    matches!(self.connection_states.get(peer_id), Some(ConnectionState::Open { .. }))
+  }
+
+  pub fn get_stream_state(&self, peer_id: &PeerId) -> Option<&ConnectionState> {
+    self.connection_states.get(peer_id)
   }
 }
 
@@ -350,6 +532,7 @@ impl NetworkBehaviour for StreamProtocolBehavior {
     _local_addr: &libp2p::Multiaddr,
     _remote_addr: &libp2p::Multiaddr,
   ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+    debug!("Creating handler for inbound conneciton");
     Ok(StreamProtocolConnectionHandler::new())
   }
 
@@ -361,6 +544,7 @@ impl NetworkBehaviour for StreamProtocolBehavior {
     _role_override: libp2p::core::Endpoint,
     _port_use: libp2p::core::transport::PortUse,
   ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+    debug!("Creating handler for outbound conneciton");
     Ok(StreamProtocolConnectionHandler::new())
   }
 
@@ -368,11 +552,30 @@ impl NetworkBehaviour for StreamProtocolBehavior {
     match event {
       libp2p::swarm::FromSwarm::ConnectionEstablished(connection_established) => {
         debug!("Connection established to: {}", connection_established.peer_id);
-        self.connections.insert(connection_established.peer_id, connection_established.connection_id);
+        let peer_id = connection_established.peer_id;
+        let connection_id = connection_established.connection_id;
+
+        match self.connection_states.get(&peer_id) {
+          Some(ConnectionState::Dialing) => {
+            // We where dialing this before
+            self.pending_events.push_back(ToSwarm::NotifyHandler {
+              peer_id,
+              handler: libp2p::swarm::NotifyHandler::One(connection_id),
+              event: HandlerCommand::OpenStream,
+            });
+          }
+          _ => {
+            self.connection_states.insert(peer_id, ConnectionState::Connected { connection_id });
+          }
+        }
       }
       libp2p::swarm::FromSwarm::ConnectionClosed(connection_closed) => {
-        debug!("Connection to {} closed", connection_closed.peer_id);
-        self.connections.remove(&connection_closed.peer_id);
+        let peer_id = connection_closed.peer_id;
+        debug!("Connection to {} closed", peer_id);
+
+        if self.connection_states.contains_key(&peer_id) {
+          self.connection_states.insert(peer_id, ConnectionState::Disconnected);
+        }
       }
       _ => {}
     }
@@ -381,7 +584,7 @@ impl NetworkBehaviour for StreamProtocolBehavior {
   fn on_connection_handler_event(
     &mut self,
     peer_id: PeerId,
-    _connection_id: libp2p::swarm::ConnectionId,
+    connection_id: libp2p::swarm::ConnectionId,
     event: libp2p::swarm::THandlerOutEvent<Self>,
   ) {
     match event {
@@ -389,10 +592,24 @@ impl NetworkBehaviour for StreamProtocolBehavior {
         debug!("Packet recivied: {:?}", packet);
         self.pending_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::PacketReceived { peer_id, packet }));
       }
-      HandlerEvent::ConnectionClose => {
-        self
-          .pending_events
-          .push_back(ToSwarm::CloseConnection { peer_id, connection: libp2p::swarm::CloseConnection::All });
+      HandlerEvent::StreamOpened => {
+        debug!("Stream to {} opened", peer_id);
+        self.connection_states.insert(peer_id, ConnectionState::Open { connection_id });
+      }
+      HandlerEvent::StreamClosed { reason } => {
+        debug!("Stream to {} closed: {:?}", peer_id, reason);
+        match self.connection_states.get(&peer_id) {
+          Some(ConnectionState::Open { connection_id: current_con_id })
+          | Some(ConnectionState::Opening { connection_id: current_con_id }) => {
+            if current_con_id == &connection_id {
+              self.connection_states.insert(peer_id, ConnectionState::Connected { connection_id });
+            }
+          }
+          _ => {
+            self.connection_states.insert(peer_id, ConnectionState::Disconnected);
+          }
+        }
+        self.pending_events.push_back(ToSwarm::GenerateEvent(BehaviourEvent::StreamClosed { peer_id, reason }));
       }
     }
   }

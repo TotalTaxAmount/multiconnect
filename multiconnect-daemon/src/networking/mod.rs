@@ -173,9 +173,10 @@ impl NetworkManager {
               warn!("Connection failed for `{}` : {}", connection_id, error);
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::Mdns(mdns::Event::Discovered(discoverd))) => {
-              for (peer_id, _multiaddr) in discoverd {
+              for (peer_id, multiaddr) in discoverd {
                 if !discovered_peers.contains(&peer_id) {
                   discovered_peers.insert(peer_id);
+                  swarm.behaviour_mut().stream_protocol.add_peer_address(peer_id, multiaddr);
                   info!("Discovered peer: {}", peer_id);
                   let _ = network_event_tx.send(NetworkEvent::PeerDiscoverd(peer_id));
                 }
@@ -231,16 +232,22 @@ impl NetworkManager {
               },
               NetworkCommand::SendPacket(peer_id, packet) => {
                 debug!("Sending {:?} to {}", packet, peer_id);
-                swarm.behaviour_mut().stream_protocol.send_packet(peer_id, packet)
+                if let Err(e) = swarm.behaviour_mut().stream_protocol.send_packet(peer_id, packet) {
+                  error!("Error sending packet: {}", e);
+                }
               },
               NetworkCommand::ApproveStream(peer_id) => {},
               NetworkCommand::DenyStream(peer_id) => {},
               NetworkCommand::OpenStream(peer_id) => {
-                swarm.behaviour_mut().stream_protocol.open_stream(peer_id);
+                if let Err(e) = swarm.behaviour_mut().stream_protocol.open_stream(peer_id) {
+                  error!("Error opening stream: {}", e);
+                }
               },
               NetworkCommand::CloseStream(peer_id) => {
                 debug!("Closing stream for {}", peer_id);
-                swarm.behaviour_mut().stream_protocol.close_stream(peer_id);
+                if let Err(e) = swarm.behaviour_mut().stream_protocol.close_stream(peer_id) {
+                  error!("Error closing stream: {}", e);
+                }
               },
               NetworkCommand::SendPairingProtocolRequest(peer_id, packet) => {
                 debug!("Sending pairing protocol request to {}", peer_id);
