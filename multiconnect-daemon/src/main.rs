@@ -1,7 +1,7 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use multiconnect_config::ConfigManager;
 use multiconnect_daemon::{
-  modules::{file_transfer::FileTransferModule, pairing::PairingModule, ModuleManager},
+  modules::{debug::DebugModule, file_transfer::FileTransferModule, pairing::PairingModule, ModuleManager},
   networking::NetworkManager,
   Daemon, MulticonnectArgs,
 };
@@ -27,6 +27,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
       ))
     })
     .level(log::LevelFilter::from_str(&args.log_level)?)
+    .level_for("netlink_proto", log::LevelFilter::Off)
+    .level_for("netlink_packet_route", log::LevelFilter::Off)
     .chain(std::io::stdout())
     .apply()?;
 
@@ -39,6 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
   let module_manager = Box::leak(Box::new(ModuleManager::new(network_manager, daemon.clone()).await));
   module_manager.register(pairing_module);
   module_manager.register(FileTransferModule::new().await);
+  module_manager.register(DebugModule::new());
 
   let _ = module_manager.start().await;
   Ok(())

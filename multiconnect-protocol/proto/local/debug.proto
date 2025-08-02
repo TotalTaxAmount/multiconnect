@@ -1,0 +1,6 @@
+message D0Debug {
+  // The packet id
+  required uint32 id = 1;
+  // Debug whatever
+  required string debug = 2;
+}

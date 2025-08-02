@@ -1,15 +1,19 @@
 mod daemon;
 mod modules;
 
+use std::str::FromStr;
+
 use argh::FromArgs;
 use daemon::Daemon;
+use libp2p_core::PeerId;
 use modules::{
   file_transfer::{self, FileTransferModule},
   pairing::{self, PairingModule},
   FrontendModuleManager,
 };
 use multiconnect_config::CONFIG;
-use tauri::{async_runtime, Manager};
+use multiconnect_protocol::{generated::D0Debug, local::peer::L1PeerExpired, Packet};
+use tauri::{async_runtime, Manager, State};
 use tokio::task;
 
 #[allow(dead_code)]
@@ -51,6 +55,7 @@ pub fn run(port: u16) {
     .invoke_handler(tauri::generate_handler![
       set_theme,
       get_theme,
+      debug_cmd,
       pairing::send_pairing_request,
       pairing::refresh_devices,
       pairing::send_pairing_response,
@@ -73,4 +78,12 @@ async fn set_theme(theme: String) -> Result<(), ()> {
   cfg.get_mut_config().frontend.theme = theme;
   cfg.save_config().await.unwrap();
   Ok(())
+}
+
+#[tauri::command]
+async fn debug_cmd(manager: State<'_, FrontendModuleManager>, cmd: String) -> Result<(), ()> {
+  with_ctx!(manager, |ctx| {
+    ctx.send_packet(Packet::D0Debug(D0Debug::new(cmd))).await;
+    Ok(())
+  })
 }

@@ -23,4 +23,4 @@
 
 ## Misc
 
-- Fix rust build github action
+- Rename `multiconnect-protocol` to `multiconnect-core`

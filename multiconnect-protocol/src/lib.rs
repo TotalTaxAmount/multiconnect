@@ -24,6 +24,8 @@ pub mod generated {
 
 pub use generated::multiconnect::*;
 
+use crate::generated::D0Debug;
+
 // Generate handlers for a list of packets
 macro_rules! gen_packet_handlers {
   {$($variant:ident => $tag:expr),* $(,)?} => {
@@ -135,7 +137,7 @@ impl SavedDevice {
     &self.device
   }
 
-  pub fn get_paired(&self) -> bool {
+  pub fn is_paired(&self) -> bool {
     self.paired
   }
 
@@ -170,7 +172,8 @@ gen_packet_handlers! {
   L9TransferFile => 14,
   L10TransferProgress => 15,
   L11TransferStatus => 16,
-  S1PeerMeta => 17
+  S1PeerMeta => 17,
+  D0Debug => 99,
 }
 
 impl Packet {

@@ -10,6 +10,7 @@ message L0PeerFound {
   required bytes device = 2;
 }
 
+
 // Send from the daemon to a client when a peer expires
 message L1PeerExpired {
   // The packet id

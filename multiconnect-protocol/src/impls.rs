@@ -4,7 +4,7 @@ use libp2p::PeerId;
 use uuid::Uuid;
 
 use crate::{
-  generated::{P4TransferStart, P5TransferChunk},
+  generated::{D0Debug, P4TransferStart, P5TransferChunk},
   local::{
     peer::*,
     transfer::{
@@ -154,5 +154,11 @@ impl S1PeerMeta {
       device.mc_version.to_string(),
       device.device_type,
     )
+  }
+}
+
+impl D0Debug {
+  pub fn new(debug: String) -> Self {
+    Self { id: Packet::create_id(), debug }
   }
 }
