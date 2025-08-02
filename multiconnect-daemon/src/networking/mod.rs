@@ -12,7 +12,7 @@ use libp2p::{
 };
 use log::{debug, error, info, trace, warn};
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{Device, Packet};
+use multiconnect_core::{Device, Packet};
 use protocols::{BehaviourEvent, PairingCodec};
 use tokio::{
   fs::File,

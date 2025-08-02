@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use log::{debug, error, info, trace};
-use multiconnect_protocol::Packet;
+use multiconnect_core::Packet;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpSocket,

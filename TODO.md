@@ -23,4 +23,4 @@
 
 ## Misc
 
-- Rename `multiconnect-protocol` to `multiconnect-core`
+- Rename `multiconnect-core` to `multiconnect-core`

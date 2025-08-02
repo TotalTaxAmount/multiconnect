@@ -22,7 +22,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use multiconnect_protocol::{
+use multiconnect_core::{
   generated::{P4TransferStart, P5TransferChunk},
   local::transfer::{l10_transfer_progress, l11_transfer_status, L10TransferProgress, L11TransferStatus},
   Packet,
@@ -137,7 +137,7 @@ impl MulticonnectModule for FileTransferModule {
           self.chunk_tx.send(packet).await?;
         }
         Packet::P6TransferStatus(packet) => match packet.status() {
-          multiconnect_protocol::generated::p6_transfer_status::Status::Ok => {
+          multiconnect_core::generated::p6_transfer_status::Status::Ok => {
             let uuid = Uuid::from_str(&packet.uuid)?;
             let file_name = Path::new(
               &self.transfers.lock().await.remove(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?.file,
@@ -153,8 +153,8 @@ impl MulticonnectModule for FileTransferModule {
               )))
               .await;
           }
-          multiconnect_protocol::generated::p6_transfer_status::Status::MalformedPacket => todo!(),
-          multiconnect_protocol::generated::p6_transfer_status::Status::WrongSig => {
+          multiconnect_core::generated::p6_transfer_status::Status::MalformedPacket => todo!(),
+          multiconnect_core::generated::p6_transfer_status::Status::WrongSig => {
             let uuid = Uuid::from_str(&packet.uuid)?;
             let file_name = Path::new(
               &self.transfers.lock().await.remove(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?.file,

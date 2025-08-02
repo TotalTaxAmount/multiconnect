@@ -7,7 +7,7 @@ use std::{
 use libp2p::PeerId;
 use log::error;
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::SavedDevice;
+use multiconnect_core::SavedDevice;
 
 const FILENAME: &str = "saved_devices.json";
 

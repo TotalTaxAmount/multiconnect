@@ -3,11 +3,11 @@ name: Build Rust Apps
 on:
   pull_request:
     paths:
-      - 'multiconnect-daemon/**'
-      - 'multiconnect-frontend/**'
-      - 'multiconnect-protocol/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+      - "multiconnect-daemon/**"
+      - "multiconnect-frontend/**"
+      - "multiconnect-core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 jobs:
   build-daemon:

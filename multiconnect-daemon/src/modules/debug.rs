@@ -2,7 +2,7 @@ use std::{error::Error, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use libp2p::PeerId;
-use multiconnect_protocol::{p2p::P0Ping, Packet};
+use multiconnect_core::{p2p::P0Ping, Packet};
 use tokio::sync::Mutex;
 
 use crate::{

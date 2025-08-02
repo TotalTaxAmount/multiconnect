@@ -30,7 +30,7 @@ use libp2p::{
   InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId,
 };
 use log::{debug, error, trace, warn};
-use multiconnect_protocol::Packet;
+use multiconnect_core::Packet;
 use thiserror::Error;
 use tokio::{
   sync::{mpsc, oneshot},

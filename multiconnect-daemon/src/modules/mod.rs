@@ -6,7 +6,7 @@ pub mod store;
 use async_trait::async_trait;
 use libp2p::PeerId;
 use log::{debug, error, warn};
-use multiconnect_protocol::{Device, Packet, SavedDevice};
+use multiconnect_core::{Device, Packet, SavedDevice};
 use std::{collections::HashMap, error::Error, sync::Arc};
 use store::Store;
 use tokio::sync::{mpsc, Mutex};

@@ -10,7 +10,7 @@ use std::{
 
 use async_trait::async_trait;
 use log::warn;
-use multiconnect_protocol::Packet;
+use multiconnect_core::Packet;
 use tauri::{AppHandle, Wry};
 use tokio::sync::{broadcast, mpsc, Mutex};
 

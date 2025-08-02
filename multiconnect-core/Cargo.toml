@@ -1,10 +1,10 @@
 [package]
-name = "multiconnect-protocol"
+name = "multiconnect-core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "multiconnect_protocol"
+name = "multiconnect_core"
 path = "src/lib.rs"
 
 [dependencies]

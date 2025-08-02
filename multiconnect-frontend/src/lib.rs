@@ -12,7 +12,7 @@ use modules::{
   FrontendModuleManager,
 };
 use multiconnect_config::CONFIG;
-use multiconnect_protocol::{generated::D0Debug, local::peer::L1PeerExpired, Packet};
+use multiconnect_core::{generated::D0Debug, local::peer::L1PeerExpired, Packet};
 use tauri::{async_runtime, Manager, State};
 use tokio::task;
 

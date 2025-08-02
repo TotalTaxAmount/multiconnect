@@ -3415,7 +3415,7 @@ dependencies = [
  "libp2p-core",
  "log",
  "multiconnect-config",
- "multiconnect-protocol",
+ "multiconnect-core",
  "pretty_env_logger",
  "serde",
  "serde_json",
@@ -3443,37 +3443,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "multiconnect-daemon"
-version = "0.0.0-DEV"
-dependencies = [
- "argh",
- "async-trait",
- "bincode",
- "fern",
- "hex",
- "humantime",
- "lazy_static",
- "libp2p",
- "libp2p-stream",
- "log",
- "multiconnect-config",
- "multiconnect-protocol",
- "port_check",
- "prost 0.14.1",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.12",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing-subscriber",
- "uid",
- "uuid",
-]
-
-[[package]]
-name = "multiconnect-protocol"
+name = "multiconnect-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -3492,6 +3462,36 @@ dependencies = [
  "uid",
  "uuid",
  "wmi",
+]
+
+[[package]]
+name = "multiconnect-daemon"
+version = "0.0.0-DEV"
+dependencies = [
+ "argh",
+ "async-trait",
+ "bincode",
+ "fern",
+ "hex",
+ "humantime",
+ "lazy_static",
+ "libp2p",
+ "libp2p-stream",
+ "log",
+ "multiconnect-config",
+ "multiconnect-core",
+ "port_check",
+ "prost 0.14.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing-subscriber",
+ "uid",
+ "uuid",
 ]
 
 [[package]]

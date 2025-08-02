@@ -25,7 +25,7 @@ libp2p = { version = "0.55.0", features = [
   "identify",
 ] }
 
-multiconnect-protocol = { path = "../multiconnect-protocol" }
+multiconnect-core = { path = "../multiconnect-core" }
 multiconnect-config = { path = "../multiconnect-config" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4.27"

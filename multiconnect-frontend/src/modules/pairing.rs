@@ -3,7 +3,7 @@ use std::{any::Any, collections::HashMap, error::Error, str::FromStr, sync::Arc}
 use async_trait::async_trait;
 use libp2p_core::PeerId;
 use log::{debug, error, warn};
-use multiconnect_protocol::{
+use multiconnect_core::{
   local::peer::{L2PeerPairRequest, L3PeerPairResponse, L4Refresh},
   Device, Packet,
 };
