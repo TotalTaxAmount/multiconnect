@@ -7,10 +7,7 @@ use multiconnect_protocol::{
   local::peer::{
     L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L7DeviceStatus, L8DeviceStatusUpdate,
   },
-  p2p::{
-    peer::{P2PeerPairRequest, P3PeerPairResponse},
-    P0Ping,
-  },
+  p2p::peer::{P2PeerPairRequest, P3PeerPairResponse},
   shared::peer::S1PeerMeta,
   Device, Packet, SavedDevice,
 };

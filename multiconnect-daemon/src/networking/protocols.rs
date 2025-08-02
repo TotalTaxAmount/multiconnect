@@ -9,14 +9,12 @@ use std::{
   future::Future,
   io::{self, Cursor},
   pin::Pin,
-  sync::{atomic::AtomicBool, Arc},
   task::Poll,
   time::Duration,
   vec,
 };
 
 use async_trait::async_trait;
-use bincode::de;
 use libp2p::{
   core::UpgradeInfo,
   futures::{

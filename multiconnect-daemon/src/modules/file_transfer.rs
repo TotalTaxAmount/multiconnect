@@ -16,9 +16,9 @@ use std::{
   u16,
 };
 use tokio::{
-  fs::{self, File, OpenOptions, ReadDir},
+  fs::{self, File, OpenOptions},
   io::{AsyncReadExt, AsyncWriteExt, BufReader},
-  sync::{broadcast, Mutex},
+  sync::Mutex,
 };
 use uuid::Uuid;
 
