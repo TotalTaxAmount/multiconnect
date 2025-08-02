@@ -1,18 +1,16 @@
 mod daemon;
 mod modules;
 
-use std::str::FromStr;
 
 use argh::FromArgs;
 use daemon::Daemon;
-use libp2p_core::PeerId;
 use modules::{
   file_transfer::{self, FileTransferModule},
   pairing::{self, PairingModule},
   FrontendModuleManager,
 };
 use multiconnect_config::CONFIG;
-use multiconnect_core::{generated::D0Debug, local::peer::L1PeerExpired, Packet};
+use multiconnect_core::{generated::D0Debug, Packet};
 use tauri::{async_runtime, Manager, State};
 use tokio::task;
 
