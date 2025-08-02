@@ -233,7 +233,7 @@ impl NetworkManager {
               },
               NetworkCommand::SendPairingProtocolResponse(ch, packet) => {
                 if ch.is_open() {
-                  debug!("Sending pairing protocl response");
+                  debug!("Sending pairing protocol response");
                   let _ = swarm.behaviour_mut().pairing_protocol.send_response(ch, packet);
                 } else {
                   warn!("Cannot send response on closed channel");

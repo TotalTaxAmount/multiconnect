@@ -146,6 +146,7 @@ impl MulticonnectModule for PairingModule {
                 if let Some(source_device) = self.discovered_devices.lock().await.remove(&source) {
                   ctx.add_device(SavedDevice::new(source_device, true));
                   ctx.save_store().await;
+                  ctx.update_whitelist(source, true).await;
                 }
 
                 // debug!("Attempting to open stream");
@@ -291,8 +292,6 @@ impl MulticonnectModule for PairingModule {
                       guard.send_to_frontend(Packet::L0PeerFound(L0PeerFound::new(&device))).await;
                       let mut discovered_devices = discovered_devices.lock().await;
                       discovered_devices.insert(device.peer, device);
-                      guard.open_stream(peer_id).await;
-
                     },
                     // This happens on the initators system
                     Packet::P3PeerPairResponse(packet) => {
@@ -309,9 +308,7 @@ impl MulticonnectModule for PairingModule {
                           discovered_devices.lock().await.remove(&device.peer);
                           guard.add_device(SavedDevice::new(device.clone(), true));
                           guard.save_store().await;
-
-
-                          debug!("Attempting to open stream");
+                          guard.update_whitelist(device.peer, true).await;
                           guard.open_stream(device.peer).await;
 
                         }
