@@ -2,7 +2,7 @@ use std::{collections::HashMap, error::Error, str::FromStr, sync::Arc, time::Dur
 
 use async_trait::async_trait;
 use libp2p::{request_response::ResponseChannel, PeerId};
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use multiconnect_core::{
   local::peer::{
     L0PeerFound, L1PeerExpired, L2PeerPairRequest, L3PeerPairResponse, L7DeviceStatus, L8DeviceStatusUpdate,
@@ -143,11 +143,9 @@ impl MulticonnectModule for PairingModule {
                 if let Some(source_device) = self.discovered_devices.lock().await.remove(&source) {
                   ctx.add_device(SavedDevice::new(source_device, true));
                   ctx.save_store().await;
+                  // Whitelist for stream
                   ctx.update_whitelist(source, true).await;
                 }
-
-                // debug!("Attempting to open stream");
-                // ctx.open_stream(source).await;
               }
 
               debug!("Sending back response");
@@ -269,7 +267,7 @@ impl MulticonnectModule for PairingModule {
                       // if let Some(device) = discovered_devices.lock().await.get(&peer_id) {}
 
                       pending_requests.lock().await.insert(uuid, (Instant::now(), Packet::P2PeerPairRequest(packet.clone()), peer_id));
-                      debug!("Pending: {:?}", pending_requests.lock().await);
+                      trace!("Pending: {:?}", pending_requests.lock().await);
                       res_channels.lock().await.insert(peer_id, (Instant::now(), response_channel));
 
                       let guard = ctx.lock().await;

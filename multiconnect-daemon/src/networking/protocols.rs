@@ -333,7 +333,7 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
     match event {
       HandlerCommand::OpenStream => {
         if self.reader_handle.is_none() {
-          trace!("Handler opening stream");
+          debug!("Handler opening stream");
           self.pending_events.push_back(ConnectionHandlerEvent::OutboundSubstreamRequest {
             protocol: SubstreamProtocol::new(StreamProtocol, ()),
           });
@@ -373,7 +373,7 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
       // TODO: Be able to accept/deny streams
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(e) => {
         if self.is_whitelisted {
-          trace!("Inbound stream established");
+          debug!("Inbound stream established");
           let stream = e.protocol;
           let (read_half, write_half) = (stream as Stream).split();
           self.start_reader(read_half);
@@ -385,7 +385,7 @@ impl ConnectionHandler for StreamProtocolConnectionHandler {
         }
       }
       libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(e) => {
-        trace!("Outbound stream established");
+        debug!("Outbound stream established");
         let stream = e.protocol;
         let (read_half, write_half) = (stream as Stream).split();
         self.start_reader(read_half);
@@ -429,10 +429,36 @@ impl StreamProtocolBehavior {
 
   pub fn add_whitelisted_peer(&mut self, peer_id: &PeerId) {
     self.whitelisted_peers.insert(*peer_id);
+    if let Some(
+      ConnectionState::Connected { connection_id }
+      | ConnectionState::Open { connection_id }
+      | ConnectionState::Opening { connection_id },
+    ) = self.connection_states.get(peer_id)
+    {
+      // Update handler if there is already a connection from the pairing protocol
+      self.pending_events.push_back(ToSwarm::NotifyHandler {
+        peer_id: *peer_id,
+        handler: libp2p::swarm::NotifyHandler::One(*connection_id),
+        event: HandlerCommand::UpdateWhitelist { is_whitelisted: true },
+      });
+    }
   }
 
   pub fn remove_whitelisted_peer(&mut self, peer_id: &PeerId) {
     self.whitelisted_peers.remove(peer_id);
+    if let Some(
+      ConnectionState::Connected { connection_id }
+      | ConnectionState::Open { connection_id }
+      | ConnectionState::Opening { connection_id },
+    ) = self.connection_states.get(peer_id)
+    {
+      // Update handler if there is already a connection from the pairing protocol
+      self.pending_events.push_back(ToSwarm::NotifyHandler {
+        peer_id: *peer_id,
+        handler: libp2p::swarm::NotifyHandler::One(*connection_id),
+        event: HandlerCommand::UpdateWhitelist { is_whitelisted: false },
+      });
+    }
   }
 
   pub fn send_packet(&mut self, peer_id: PeerId, packet: Packet) -> Result<(), StreamProtocolError> {

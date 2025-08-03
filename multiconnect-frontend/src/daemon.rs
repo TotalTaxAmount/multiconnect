@@ -87,8 +87,8 @@ impl Daemon {
             match res {
               Some(p) => {
                 let bytes = Packet::to_bytes(&p).unwrap();
-                debug!("Sending packet: {:?}", p);
-                debug!("Raw packet: {:?}", bytes);
+                trace!("Sending packet: {:?}", p);
+                trace!("Raw packet: {:?}", bytes);
                 if let Err(e) = write_half.write_all(&bytes).await {
                   error!("Write error: {}", e);
                 }
