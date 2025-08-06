@@ -258,13 +258,16 @@ impl MulticonnectModule for FileTransferModule {
             // Create a uuid for this transfer
             let transfer_uuid = Uuid::new_v4();
 
-            let path = Path::new(&transfer.file);
 
             // Get this size for a chunk, make sure to leave room for the reset of the transfer packet
             let chunk_size = u16::MAX as usize - METADATA_SIZE;
+            let ctx = ctx.clone();
+            let transfer_clone = transfer.clone();
 
             // Do the acuall transfer
-            let result: Result<(), Box<dyn Error>> = async {
+            let result: Result<(), String> = tokio::spawn(async move {
+              let path = Path::new(&transfer.file);
+
               debug!("Sending start packet");
 
               // Send transfer start packet
@@ -284,7 +287,7 @@ impl MulticonnectModule for FileTransferModule {
 
 
               // Open the file we want to send
-              let mut file = File::open(path).await?;
+              let mut file = File::open(path).await.map_err(|e| e.to_string())?;
 
               // Create a buffer to write into
               let mut buf = vec![0u8; chunk_size];
@@ -293,7 +296,7 @@ impl MulticonnectModule for FileTransferModule {
               let mut processed = 0;
               loop {
                 // Read into the buffer
-                let read = file.read(&mut buf).await?;
+                let read = file.read(&mut buf).await.map_err(|e| e.to_string())?;
                 if read == 0 {
                   debug!("Done reading file");
                   // We have read the whole file
@@ -324,13 +327,13 @@ impl MulticonnectModule for FileTransferModule {
               }
 
               Ok(())
-            }
-            .await;
+            })
+            .await.unwrap();
 
             if let Err(e) = result {
-              warn!("Failed to send file {} to peer {}: {}", transfer.file, transfer.peer, e);
+              warn!("Failed to send file {} to peer {}: {}", transfer_clone.file, transfer_clone.peer, e);
             } else {
-              info!("Compleated transfer to {}, source: {}", transfer.peer, transfer.file);
+              info!("Compleated transfer to {}, source: {}", transfer_clone.peer, transfer_clone.file);
             }
           },
           // Recivied a chunk for an incoming transfer
