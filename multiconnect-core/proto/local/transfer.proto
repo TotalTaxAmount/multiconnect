@@ -25,9 +25,9 @@ message L10TransferProgress {
 message L11TransferStatus {
   required uint32 id = 1;
   required string file_name = 2;
-  required Status status = 3;
+  required LTStatus status = 3;
 
-  enum Status {
+  enum LTStatus {
     OK = 1;
     INVALID_SIG = 2;
   }

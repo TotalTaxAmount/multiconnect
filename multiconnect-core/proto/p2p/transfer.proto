@@ -16,9 +16,9 @@ message P5TransferChunk {
 message P6TransferStatus {
   required uint32 id = 1;
   required string uuid = 2;
-  required Status status = 3;
+  required PTStatus status = 3;
 
-  enum Status {
+  enum PTStatus {
     OK = 0;
     MALFORMED_PACKET = 1;
     WRONG_SIG = 2;

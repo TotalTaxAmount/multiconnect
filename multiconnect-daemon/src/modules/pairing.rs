@@ -101,9 +101,9 @@ impl MulticonnectModule for PairingModule {
           *online = true;
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
 
-          // if ctx.this_device.peer > peer_id {
-          //   ctx.dial_peer(peer_id).await;
-          // }
+          if ctx.this_device.peer > peer_id {
+            ctx.open_stream(peer_id).await;
+          }
         } else {
           if ctx.this_device.peer > peer_id {
             debug!("[first] Sending metadata to {}", peer_id);

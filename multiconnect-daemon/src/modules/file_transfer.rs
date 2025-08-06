@@ -3,7 +3,7 @@ use libp2p::{
   futures::{channel::mpsc, SinkExt, StreamExt},
   PeerId,
 };
-use log::{debug, warn};
+use log::{debug, info, warn};
 use multiconnect_config::CONFIG;
 use sha2::{Digest, Sha256};
 use std::{
@@ -23,7 +23,7 @@ use tokio::{
 use uuid::Uuid;
 
 use multiconnect_core::{
-  generated::{P4TransferStart, P5TransferChunk},
+  generated::{P4TransferStart, P5TransferChunk, P6TransferStatus},
   local::transfer::{l10_transfer_progress, l11_transfer_status, L10TransferProgress, L11TransferStatus},
   Packet,
 };
@@ -40,12 +40,19 @@ pub struct FileTransferModule {
   chunk_rx: Option<mpsc::Receiver<P5TransferChunk>>,
 }
 
+const METADATA_SIZE: usize = 257;
+
 #[derive(Debug, Clone)]
 struct FileTransfer {
+  /// Total size of the file
   total_len: usize,
+  /// The amount of the file that has been sent or recived
   processed_len: usize,
-  peer: PeerId, // Sender or recivers
+  /// The peer id of the sender or the reciver depending on the direction
+  peer: PeerId,
+  /// The file name
   file: String,
+  // The hash of the file
   hash: Option<String>,
 }
 
@@ -69,6 +76,7 @@ impl FileTransferModule {
     }
   }
 
+  /// Calculate the sha256 checksum of a file
   async fn hash_sha256<P: AsRef<Path>>(path: P) -> std::io::Result<String> {
     let file = File::open(path).await?;
     let mut reader = BufReader::new(file);
@@ -88,6 +96,10 @@ impl FileTransferModule {
     Ok(hex::encode(hasher.finalize()))
   }
 
+  /// Create a unique file path from a file path
+  /// Will check if file exists, if it does it will chage the name until the file doesnt exist
+  /// For example, say the path is `/foo/bar.png` and it exists. The target path will become
+  /// `/foo/bar (1).png` if that exists then `/foo/bar (2).png` and so on
   async fn create_unique_file<P: AsRef<Path>>(base: P) -> io::Result<PathBuf> {
     let base = base.as_ref();
     let parent = base.parent().unwrap_or_else(|| Path::new("."));
@@ -111,34 +123,45 @@ impl FileTransferModule {
 #[async_trait]
 impl MulticonnectModule for FileTransferModule {
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
+    // Only thing we care about is recivied packets from peers
     if let NetworkEvent::PacketReceived(source, packet) = event {
       match packet {
+        // A peer has started a transfer to us
         Packet::P4TransferStart(packet) => {
+          // Get the uuid for the transfer provided by the peer
           let uuid = Uuid::from_str(&packet.uuid)?;
           let cfg = &CONFIG.get().ok_or("Failed to get config")?.read().await;
-          let base = Path::new(&cfg.get_config().modules.transfer.save_path);
+
+          // Figure out where to save the file
+          let base = Path::new(&cfg.get_config().modules.transfer.save_path); // Base path from config
 
           let mut file_name =
-            Path::new(&packet.file_name).file_name().ok_or("Failed to get filename from path")?.to_os_string();
-          file_name.push(".tmp");
+            Path::new(&packet.file_name).file_name().ok_or("Failed to get filename from path")?.to_os_string(); // File name from the peer
+          file_name.push(".tmp"); // Add .tmp while it is being downloaded
 
-          let full_path = base.join(file_name);
+          let full_path = base.join(file_name); // The full save path
 
-          let path = Self::create_unique_file(&full_path).await?;
+          let path = Self::create_unique_file(&full_path).await?; // Make sure we are not going to overwrite something
 
           debug!("Received transfer start from {} for {:?}: uuid = {}", source, path, uuid);
 
+          // Add transfer to know transfers
           self.transfers.lock().await.insert(
             uuid,
             FileTransfer::new(packet.file_size as usize, source, path.to_string_lossy(), Some(packet.signature)),
           );
         }
         Packet::P5TransferChunk(packet) => {
+          debug!("A");
+          // Send transfer packet to other thread so we don't block other modules
           self.chunk_tx.send(packet).await?;
         }
         Packet::P6TransferStatus(packet) => match packet.status() {
-          multiconnect_core::generated::p6_transfer_status::Status::Ok => {
+          // A peer recivied a file successfully
+          multiconnect_core::generated::p6_transfer_status::PtStatus::Ok => {
+            // Parse the uuid
             let uuid = Uuid::from_str(&packet.uuid)?;
+            // Remove the transfer from active transfers
             let file_name = Path::new(
               &self.transfers.lock().await.remove(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?.file,
             )
@@ -146,16 +169,24 @@ impl MulticonnectModule for FileTransferModule {
             .ok_or("Failed to get filename")?
             .to_string_lossy()
             .to_string();
+
+            debug!("Recivied sucesssful status for transfer: {}", file_name);
+
+            // Notify that frontend
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                 file_name,
-                l11_transfer_status::Status::Ok,
+                l11_transfer_status::LtStatus::Ok,
               )))
               .await;
           }
-          multiconnect_core::generated::p6_transfer_status::Status::MalformedPacket => todo!(),
-          multiconnect_core::generated::p6_transfer_status::Status::WrongSig => {
+          multiconnect_core::generated::p6_transfer_status::PtStatus::MalformedPacket => todo!(),
+          // Signatures did not match and the peer did not save the file
+          multiconnect_core::generated::p6_transfer_status::PtStatus::WrongSig => {
+            // Parse the uuid
             let uuid = Uuid::from_str(&packet.uuid)?;
+
+            // Remove the transfer from active transfers
             let file_name = Path::new(
               &self.transfers.lock().await.remove(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?.file,
             )
@@ -163,10 +194,12 @@ impl MulticonnectModule for FileTransferModule {
             .ok_or("Failed to get filename")?
             .to_string_lossy()
             .to_string();
+
+            // Notify the frontend
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                 file_name,
-                l11_transfer_status::Status::InvalidSig,
+                l11_transfer_status::LtStatus::InvalidSig,
               )))
               .await;
           }
@@ -188,12 +221,16 @@ impl MulticonnectModule for FileTransferModule {
       match packet {
         Packet::L9TransferFile(packet) => {
           debug!("Received command to send file from fronted");
+          // Get the size of the file we want to send
           let len = fs::metadata(&packet.file_path).await?.len() as usize;
+          // Target peer address
           let peer_id = PeerId::from_str(&packet.target)?;
-          // let hash = Self::hash_sha256(Path::new(&packet.file_path)).await?;
 
           debug!("Sending on channel");
-          self.transfer_tx.send(FileTransfer::new(len, peer_id, packet.file_path, None)).await?;
+          self
+            .transfer_tx
+            .send(FileTransfer::new(len, peer_id, packet.file_path, None /* Hash is none for now */))
+            .await?;
         }
         _ => {}
       }
@@ -202,23 +239,35 @@ impl MulticonnectModule for FileTransferModule {
   }
 
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) -> Result<(), Box<dyn Error>> {
-    let mut transfer_rx = self.transfer_rx.take().ok_or("Could not get transfer rx alone")?;
-    let mut chunk_rx = self.chunk_rx.take().ok_or("Could not get transfer rx alone")?;
+    let mut transfer_rx = self.transfer_rx.take().unwrap();
+    let mut chunk_rx = self.chunk_rx.take().unwrap();
 
     let transfers = self.transfers.clone();
 
+    // Thread to handle reading and writing packets
     tokio::spawn(async move {
       loop {
         tokio::select! {
+          // We have a transfer to send
           transfer = transfer_rx.next() => if let Some(transfer) = transfer {
+            // Now we get the hash when we wont block other things
             let hash = Self::hash_sha256(&transfer.file).await.unwrap();
-            debug!("Starting transfer: {}, sig = {}", transfer.file, hash);
-            let transfer_uuid = Uuid::new_v4();
-            let path = Path::new(&transfer.file);
-            let chunk_size = u16::MAX as usize - 257;
 
+            debug!("Starting transfer: {}, sig = {}", transfer.file, hash);
+
+            // Create a uuid for this transfer
+            let transfer_uuid = Uuid::new_v4();
+
+            let path = Path::new(&transfer.file);
+
+            // Get this size for a chunk, make sure to leave room for the reset of the transfer packet
+            let chunk_size = u16::MAX as usize - METADATA_SIZE;
+
+            // Do the acuall transfer
             let result: Result<(), Box<dyn Error>> = async {
               debug!("Sending start packet");
+
+              // Send transfer start packet
               ctx
                 .lock()
                 .await
@@ -228,29 +277,42 @@ impl MulticonnectModule for FileTransferModule {
                     transfer.total_len as u64,
                     transfer.file.clone(),
                     transfer_uuid.to_string(),
-                    hash,
+                    hash /* Now we have the hash */,
                   )),
                 )
                 .await;
 
+
+              // Open the file we want to send
               let mut file = File::open(path).await?;
+
+              // Create a buffer to write into
               let mut buf = vec![0u8; chunk_size];
 
+              // Current amout processed
               let mut processed = 0;
               loop {
+                // Read into the buffer
                 let read = file.read(&mut buf).await?;
                 if read == 0 {
+                  debug!("Done reading file");
+                  // We have read the whole file
                   break;
                 }
+                // Add the amout read to the total amount processed
                 processed += read as u64;
 
+                // Data to send
                 let data = buf[..read].to_vec();
                 let guard = ctx.lock().await;
 
+                // Send chunk to targret peer
+                debug!("Sending chunk with {} bytes", read);
                 guard
                   .send_to_peer(transfer.peer.clone(), Packet::P5TransferChunk(P5TransferChunk::new(transfer_uuid, data)))
                   .await;
 
+                // Update the frontend progress
                 guard
                   .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
                     transfer.file.clone(),
@@ -267,57 +329,83 @@ impl MulticonnectModule for FileTransferModule {
 
             if let Err(e) = result {
               warn!("Failed to send file {} to peer {}: {}", transfer.file, transfer.peer, e);
+            } else {
+              info!("Compleated transfer to {}, source: {}", transfer.peer, transfer.file);
             }
           },
-          chunk = chunk_rx.next() => if let Some(chunk) = chunk {
+          // Recivied a chunk for an incoming transfer
+          chunk_packet = chunk_rx.next() => if let Some(chunk_packet) = chunk_packet {
             debug!("Recivied chunk");
-            let uuid = Uuid::from_str(&chunk.uuid).unwrap();
-            if let Some(status) = transfers.lock().await.get_mut(&uuid) {
-              let path = Path::new(&status.file);
-              let mut file = OpenOptions::new().append(true).open(&path).await.unwrap();
-              if let Ok(len) = file.write(&chunk.data).await {
-                status.processed_len += len;
-                let hash = status.hash.clone().ok_or("Failed to get hash").unwrap();
+            // Get the uuid of the transfer from the packet
+            let uuid = Uuid::from_str(&chunk_packet.uuid).unwrap();
 
-                if status.processed_len == status.total_len {
+            // Get the transfer (added from P4TransferStart)
+            if let Some(transfer) = transfers.lock().await.get_mut(&uuid) {
+              // Get the path to save the file (currenttly it is a temp file) and open it
+              let path = Path::new(&transfer.file);
+              let path_string = path.to_string_lossy().to_string();
+              let mut file = OpenOptions::new().append(true).open(&path).await.unwrap();
+
+              // Write the data from the chunk packet to the file
+              if let Ok(len) = file.write(&chunk_packet.data).await {
+                // Update transfer progress
+                transfer.processed_len += len;
+
+                // Check if all data has been transfered
+                if transfer.processed_len == transfer.total_len {
+                  // Get the real signature
                   let sig = Self::hash_sha256(path).await.unwrap();
+                  // Get the expected signature
+                  let hash = transfer.hash.clone().ok_or("Failed to get hash").unwrap();
+
+                  // Confirm signatures match
                   if sig == hash{
-                    let parent = path.parent().ok_or("Failed to get parent directory").unwrap();
+                    // Figure out the final save path
                     let file_name = path.file_name().ok_or("Failed to get filename").unwrap().to_string_lossy();
                     let file_name = file_name.strip_suffix(".tmp").ok_or("Expected .tmp suffix").unwrap();
+                    let parent = path.parent().ok_or("Failed to get parent directory").unwrap();
                     let final_path = parent.join(file_name);
 
+                    // Move temp download file to the final path
                     tokio::fs::rename(path, &final_path).await.unwrap();
-                    debug!("Successfully saved file ({} bytes)", status.total_len);
+                    debug!("Successfully saved file ({} bytes)", transfer.total_len);
+
+                    // Notify frontend
                     let guard = ctx.lock().await;
                     guard
                       .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                        path.file_name().ok_or("Failed to get filename").unwrap().to_string_lossy().to_string(),
-                        l11_transfer_status::Status::Ok,
+                        path_string,
+                        l11_transfer_status::LtStatus::Ok,
                       )))
                       .await;
 
-                    // ctx.send_to_peer(, packet)
                   } else {
                     warn!("File signature doesnt match: {} != {}", sig, hash);
+                    // Delete whatever was downloaded
                     let _ = fs::remove_file(path).await;
+
+                    // Notify frontend
                     let guard = ctx.lock().await;
                     guard
                       .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                        path.file_name().ok_or("Failed to get filename").unwrap().to_string_lossy().to_string(),
-                        l11_transfer_status::Status::InvalidSig,
+                        path_string,
+                        l11_transfer_status::LtStatus::InvalidSig,
                       )))
                       .await;
+
+                    guard.send_to_peer(transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::WrongSig))).await;
                   }
 
+                  // Remove compleated transfer
                   transfers.lock().await.remove(&uuid);
                 } else {
+                  // Update frontend progress
                   let guard = ctx.lock().await;
                     guard
                     .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
-                      path.file_name().ok_or("Failed to get filename").unwrap().to_string_lossy().to_string(),
-                      status.total_len as u64,
-                      status.processed_len as u64,
+                      path_string,
+                      transfer.total_len as u64,
+                      transfer.processed_len as u64,
                       l10_transfer_progress::Direction::Inbound,
                     )))
                     .await;
@@ -325,6 +413,8 @@ impl MulticonnectModule for FileTransferModule {
               } else {
                 warn!("Failed to write file");
               }
+            } else {
+              warn!("No transfer with uuid: {}", uuid);
             }
           }
         }

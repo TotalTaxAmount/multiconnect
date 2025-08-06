@@ -4,11 +4,11 @@ use libp2p::PeerId;
 use uuid::Uuid;
 
 use crate::{
-  generated::{D0Debug, P4TransferStart, P5TransferChunk},
+  generated::{p6_transfer_status::PtStatus, D0Debug, P4TransferStart, P5TransferChunk, P6TransferStatus},
   local::{
     peer::*,
     transfer::{
-      l10_transfer_progress::Direction, l11_transfer_status::Status, L10TransferProgress, L11TransferStatus,
+      l10_transfer_progress::Direction, l11_transfer_status::LtStatus, L10TransferProgress, L11TransferStatus,
       L9TransferFile,
     },
   },
@@ -51,6 +51,12 @@ impl P4TransferStart {
 impl P5TransferChunk {
   pub fn new(uuid: Uuid, data: Vec<u8>) -> Self {
     Self { id: Packet::create_id(), uuid: uuid.to_string(), data }
+  }
+}
+
+impl P6TransferStatus {
+  pub fn new(uuid: Uuid, status: PtStatus) -> Self {
+    Self { id: Packet::create_id(), uuid: uuid.to_string(), status: status.into() }
   }
 }
 
@@ -137,7 +143,7 @@ impl L10TransferProgress {
 }
 
 impl L11TransferStatus {
-  pub fn new(file_name: String, status: Status) -> Self {
+  pub fn new(file_name: String, status: LtStatus) -> Self {
     Self { id: Packet::create_id(), file_name, status: status.into() }
   }
 }
