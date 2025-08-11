@@ -25,7 +25,7 @@
   },
   "devDependencies": {
     "@iconify-json/mdi": "^1.2.3",
-    "@iconify/json": "^2.2.357",
+    "@iconify/json": "^2.2.371",
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.26.0",
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
