@@ -210,6 +210,8 @@ impl ModuleManager {
                 warn!("Error while running modules (on_frontend_event): {}", e);
               }
             }
+
+            debug!("Done calling on_frontend_event");
           },
 
           event = recv_peer_packet_rx.recv() => if let Ok(event) = event {
@@ -220,6 +222,8 @@ impl ModuleManager {
                 warn!("Error while running modules (on_network_event): {}", e);
               }
             }
+
+            debug!("Done calling on_network_event");
           } else {
             error!("Error receiving peer packet channel");
           },

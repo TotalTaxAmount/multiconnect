@@ -30,5 +30,6 @@ message L11TransferStatus {
   enum LTStatus {
     OK = 1;
     INVALID_SIG = 2;
+    INVALID_FILE = 3;
   }
 }

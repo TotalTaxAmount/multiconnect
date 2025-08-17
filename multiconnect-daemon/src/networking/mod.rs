@@ -202,7 +202,9 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::StreamProtocol(BehaviourEvent::PacketReceived { peer_id, packet })) => {
               trace!("Received multiconnect protocol event from {}", peer_id);
-              let _ = network_event_tx.send(NetworkEvent::PacketReceived(peer_id, packet));
+              if let Err(e) = network_event_tx.send(NetworkEvent::PacketReceived(peer_id, packet)) {
+                warn!("Error sending packet received event: {}", e);
+              }
             }
             _ => {
               trace!("Event: {:?}", event);
