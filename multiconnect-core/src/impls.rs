@@ -1,10 +1,13 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use libp2p::PeerId;
+use log::debug;
 use uuid::Uuid;
 
 use crate::{
-  generated::{p6_transfer_status::PtStatus, D0Debug, P4TransferStart, P5TransferChunk, P6TransferStatus},
+  generated::{
+    p6_transfer_status::PtStatus, D0Debug, P4TransferStart, P5TransferChunk, P6TransferStatus, P7TransferAck,
+  },
   local::{
     peer::*,
     transfer::{
@@ -57,6 +60,12 @@ impl P5TransferChunk {
 impl P6TransferStatus {
   pub fn new(uuid: Uuid, status: PtStatus) -> Self {
     Self { id: Packet::create_id(), uuid: uuid.to_string(), status: status.into() }
+  }
+}
+
+impl P7TransferAck {
+  pub fn new(uuid: Uuid, progress: u64) -> Self {
+    Self { id: Packet::create_id(), uuid: uuid.to_string(), progress }
   }
 }
 
@@ -137,14 +146,14 @@ impl L9TransferFile {
 }
 
 impl L10TransferProgress {
-  pub fn new(file_name: String, total: u64, done: u64, direction: Direction) -> Self {
-    Self { id: Packet::create_id(), file_name, total, done, direction: direction.into() }
+  pub fn new(uuid: Uuid, file_name: String, total: u64, done: u64, direction: Direction) -> Self {
+    Self { id: Packet::create_id(), uuid: uuid.to_string(), file_name, total, done, direction: direction.into() }
   }
 }
 
 impl L11TransferStatus {
-  pub fn new(file_name: String, status: LtStatus) -> Self {
-    Self { id: Packet::create_id(), file_name, status: status.into() }
+  pub fn new(uuid: Uuid, status: LtStatus) -> Self {
+    Self { id: Packet::create_id(), uuid: uuid.to_string(), status: status.into() }
   }
 }
 

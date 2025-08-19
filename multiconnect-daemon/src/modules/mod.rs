@@ -154,7 +154,7 @@ pub struct ModuleManager {
   /// Network Manager
   network_manager: NetworkManager,
   // Sender from sending frontend packets
-  send_packet_rx: Option<mpsc::Receiver<Action>>,
+  action_rx: Option<mpsc::Receiver<Action>>,
   /// Context that is shared between all modules
   ctx: Arc<Mutex<MulticonnectCtx>>,
 }
@@ -162,15 +162,15 @@ pub struct ModuleManager {
 impl ModuleManager {
   /// Create a new module manager
   pub async fn new(network_manager: NetworkManager, daemon: SharedDaemon) -> Self {
-    let (send_packet_tx, send_packet_rx) = mpsc::channel(100);
+    let (action_tx, action_rx) = mpsc::channel(10_000);
     Self {
       ctx: Arc::new(Mutex::new(
-        MulticonnectCtx::new(send_packet_tx, Device::this(network_manager.get_local_peer_id())).await,
+        MulticonnectCtx::new(action_tx, Device::this(network_manager.get_local_peer_id())).await,
       )),
       modules: Vec::new(),
       daemon,
       network_manager,
-      send_packet_rx: Some(send_packet_rx),
+      action_rx: Some(action_rx),
     }
   }
 
@@ -197,9 +197,11 @@ impl ModuleManager {
       }
     }
 
-    let mut send_packet_rx = self.send_packet_rx.take().unwrap();
+    let mut action_rx = self.action_rx.take().unwrap();
     let mut modules = std::mem::take(&mut self.modules);
     tokio::spawn(async move {
+      // let mut  = ctx.lock().await;
+
       loop {
         tokio::select! {
           event = recv_frontend_packet_rx.recv() => if let Ok(event) = event {
@@ -210,21 +212,27 @@ impl ModuleManager {
                 warn!("Error while running modules (on_frontend_event): {}", e);
               }
             }
+
+            debug!("Done calling on_frontend_event");
           },
 
-          event = recv_peer_packet_rx.recv() => if let Ok(event) = event {
-            debug!("Calling on_network_event");
-            let mut ctx = ctx.lock().await;
-            for module in modules.iter_mut() {
-              if let Err(e) = module.on_network_event(event.clone(), &mut ctx).await {
-                warn!("Error while running modules (on_network_event): {}", e);
+          event = recv_peer_packet_rx.recv() => match event {
+            Ok(event) => {
+              debug!("Calling on_network_event");
+              let mut ctx = ctx.lock().await;
+              for module in modules.iter_mut() {
+                if let Err(e) = module.on_network_event(event.clone(), &mut ctx).await {
+                  warn!("Error while running modules (on_network_event): {}", e);
+                }
               }
+              debug!("Done calling on_network_event");
             }
-          } else {
-            error!("Error receiving peer packet channel");
+            Err(e) => {
+              error!("Error receiving peer packet channel {}", e);
+            }
           },
 
-          action = send_packet_rx.recv() => if let Some(action) = action {
+          action = action_rx.recv() => if let Some(action) = action {
             match action {
                 Action::SendFrontend(packet) => { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
                 Action::SendPeer(peer_id, packet) =>{ let _ = send_network_command.send(NetworkCommand::SendPacket(peer_id, packet)).await; },

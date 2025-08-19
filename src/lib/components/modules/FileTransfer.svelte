@@ -10,6 +10,7 @@
   type TransferDirection = "inbound" | "outbound";
 
   type Transfer = {
+    uuid: string;
     direction: TransferDirection;
     fileName: string;
     done: number;
@@ -20,20 +21,21 @@
   const transfers = writable<Map<string, Transfer>>(new Map());
 
   function updateTransfer(
-    fileName: string,
+    uuid: string,
     direction: TransferDirection,
+    fileName: string,
     partial: Partial<Transfer>,
   ) {
     transfers.update((map) => {
-      const key = `${direction}:${fileName}`;
-      const existing = map.get(key) ?? {
+      const existing = map.get(uuid) ?? {
+        uuid,
         direction,
         fileName,
         done: 0,
         total: 0,
         status: "Pending",
       };
-      map.set(key, { ...existing, ...partial });
+      map.set(uuid, { ...existing, ...partial });
       return new Map(map); // force reactivity
     });
   }
@@ -48,7 +50,11 @@
       const path = selected;
       const name = path.split(/[\\/]/).pop();
       if (name) {
-        updateTransfer(name, "outbound", { status: "Sending" });
+        // // Optimistically create outbound transfer
+        // // The backend will later emit the uuid + progress
+        // updateTransfer(crypto.randomUUID(), "outbound", name, {
+        //   status: "Preparing",
+        // });
         await sendFile(peerId, path);
       }
     }
@@ -57,34 +63,33 @@
   onMount(() => {
     const unsubs: Array<() => void> = [];
 
+    // Progress listener
     const listenToProgress = async (direction: TransferDirection) => {
-      const un = await listen<[string, number, number]>(
+      const un = await listen<[string, string, number, number]>(
         `file_transfer/${direction}_progress`,
         (event) => {
-          const [fileName, total, done] = event.payload;
-          updateTransfer(fileName, direction, { done, total });
+          const [uuid, fileName, total, done] = event.payload;
+          console.log(
+            `File transfer progress for ${fileName} (${direction}): ${done}/${total} (uuid=${uuid})`,
+          );
+          updateTransfer(uuid, direction, fileName, { done, total });
         },
       );
       unsubs.push(un);
     };
 
+    // Status listener
     const listenToStatus = async () => {
       const un = await listen<[string, string]>(
         "file_transfer/status",
         (event) => {
-          const [fileName, status] = event.payload;
-          // Guess direction if status is for an existing transfer
+          const [uuid, status] = event.payload;
           transfers.update((map) => {
-            for (const key of map.keys()) {
-              if (key.endsWith(`:${fileName}`)) {
-                const [direction] = key.split(":");
-                updateTransfer(fileName, direction as TransferDirection, {
-                  status,
-                });
-                break;
-              }
+            const existing = map.get(uuid);
+            if (existing) {
+              map.set(uuid, { ...existing, status });
             }
-            return map;
+            return new Map(map);
           });
         },
       );
@@ -108,7 +113,7 @@
   <p class="text-gray-600 dark:text-gray-300 text-sm">Click to send a file</p>
 </button>
 
-{#each Array.from($transfers.values()) as transfer (transfer.direction + ":" + transfer.fileName)}
+{#each Array.from($transfers.values()) as transfer (transfer.uuid)}
   <div class="mb-3 p-3 rounded-xl bg-gray-100 dark:bg-gray-700 shadow-inner">
     <div class="text-sm text-gray-800 dark:text-gray-200">
       <div>

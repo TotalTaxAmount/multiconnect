@@ -104,9 +104,9 @@ pub struct NetworkManager {
 
 impl NetworkManager {
   pub async fn new() -> Self {
-    let (send_command_tx, send_command_rx) = mpsc::channel::<NetworkCommand>(100);
-    let (network_event_tx, network_event_rx) = broadcast::channel::<NetworkEvent>(100);
-    let (pairing_protocol_event_tx, pairing_protocol_event_rx) = mpsc::channel::<PairingProtocolEvent>(10);
+    let (send_command_tx, send_command_rx) = mpsc::channel::<NetworkCommand>(10_000);
+    let (network_event_tx, network_event_rx) = broadcast::channel::<NetworkEvent>(10_000);
+    let (pairing_protocol_event_tx, pairing_protocol_event_rx) = mpsc::channel::<PairingProtocolEvent>(100);
 
     let keys = Self::get_keys().await.unwrap();
 
@@ -202,50 +202,20 @@ impl NetworkManager {
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::StreamProtocol(BehaviourEvent::PacketReceived { peer_id, packet })) => {
               trace!("Received multiconnect protocol event from {}", peer_id);
-              let _ = network_event_tx.send(NetworkEvent::PacketReceived(peer_id, packet));
+              if let Err(e) = network_event_tx.send(NetworkEvent::PacketReceived(peer_id, packet)) {
+                warn!("Error sending packet received event: {}", e);
+              }
             }
             _ => {
               trace!("Event: {:?}", event);
             },
           },
           cmd = command_rx.recv() => if let Some(cmd) = cmd {
-            match cmd {
-              NetworkCommand::SendPacket(peer_id, packet) => {
-                trace!("Sending {:?} to {}", packet, peer_id);
-                if let Err(e) = swarm.behaviour_mut().stream_protocol.send_packet(peer_id, packet) {
-                  error!("Error sending packet: {}", e);
-                }
-              },
-              NetworkCommand::OpenStream(peer_id) => {
-                if let Err(e) = swarm.behaviour_mut().stream_protocol.open_stream(peer_id) {
-                  error!("Error opening stream: {}", e);
-                }
-              },
-              NetworkCommand::CloseStream(peer_id) => {
-                debug!("Closing stream for {}", peer_id);
-                if let Err(e) = swarm.behaviour_mut().stream_protocol.close_stream(peer_id) {
-                  error!("Error closing stream: {}", e);
-                }
-              },
-              NetworkCommand::SendPairingProtocolRequest(peer_id, packet) => {
-                debug!("Sending pairing protocol request to {}", peer_id);
-                let _ = swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
-              },
-              NetworkCommand::SendPairingProtocolResponse(ch, packet) => {
-                if ch.is_open() {
-                  debug!("Sending pairing protocol response");
-                  let _ = swarm.behaviour_mut().pairing_protocol.send_response(ch, packet);
-                } else {
-                  warn!("Cannot send response on closed channel");
-                }
-              }
-              NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted) => {
-                if is_whitelisted {
-                 swarm.behaviour_mut().stream_protocol.add_whitelisted_peer(&peer_id);
-                } else {
-                  swarm.behaviour_mut().stream_protocol.remove_peer_address(&peer_id);
-                }
-              }
+            Self::process_command(&mut swarm, cmd);
+
+            while let Ok(cmd) = command_rx.try_recv() {
+              debug!("Processing batch command");
+              Self::process_command(&mut swarm, cmd);
             }
           },
         }
@@ -253,6 +223,51 @@ impl NetworkManager {
     });
 
     Ok(())
+  }
+
+  fn process_command(swarm: &mut libp2p::Swarm<MulticonnectBehavior>, cmd: NetworkCommand) {
+    match cmd {
+      NetworkCommand::SendPacket(peer_id, packet) => {
+        trace!("Sending {:?} to {}", packet, peer_id);
+        if let Err(e) = swarm.behaviour_mut().stream_protocol.send_packet(peer_id, packet) {
+          error!("Error sending packet: {}", e);
+        }
+      }
+      NetworkCommand::OpenStream(peer_id) => {
+        debug!("Opening stream to {}", peer_id);
+        if let Err(e) = swarm.behaviour_mut().stream_protocol.open_stream(peer_id) {
+          error!("Error opening stream: {}", e);
+        }
+      }
+      NetworkCommand::CloseStream(peer_id) => {
+        debug!("Closing stream for {}", peer_id);
+        if let Err(e) = swarm.behaviour_mut().stream_protocol.close_stream(peer_id) {
+          error!("Error closing stream: {}", e);
+        }
+      }
+      NetworkCommand::SendPairingProtocolRequest(peer_id, packet) => {
+        debug!("Sending pairing protocol request to {}", peer_id);
+        swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
+      }
+      NetworkCommand::SendPairingProtocolResponse(channel, packet) => {
+        if channel.is_open() {
+          debug!("Sending pairing protocol response");
+          if let Err(_packet) = swarm.behaviour_mut().pairing_protocol.send_response(channel, packet) {
+            error!("Error sending pairing protocol response");
+          }
+        } else {
+          warn!("Cannot send response on closed channel");
+        }
+      }
+      NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted) => {
+        debug!("Updating whitelist for {}: {}", peer_id, is_whitelisted);
+        if is_whitelisted {
+          swarm.behaviour_mut().stream_protocol.add_whitelisted_peer(&peer_id);
+        } else {
+          swarm.behaviour_mut().stream_protocol.remove_peer_address(&peer_id);
+        }
+      }
+    }
   }
   /**
    * Get saved keys or generate new ones if they don't exist

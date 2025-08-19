@@ -11,10 +11,11 @@ message L9TransferFile {
 
 message L10TransferProgress {
   required uint32 id = 1;
-  required string file_name = 2;
-  required uint64 total = 3;
-  required uint64 done = 4;
-  required Direction direction = 5;
+  required string uuid = 2;
+  required string file_name = 3;
+  required uint64 total = 4;
+  required uint64 done = 5;
+  required Direction direction = 6;
 
   enum Direction {
     INBOUND = 0;
@@ -24,11 +25,15 @@ message L10TransferProgress {
 
 message L11TransferStatus {
   required uint32 id = 1;
-  required string file_name = 2;
+  required string uuid = 2;
   required LTStatus status = 3;
 
   enum LTStatus {
-    OK = 1;
-    INVALID_SIG = 2;
+    OK = 0;
+    MALFORMED_PACKET = 1;
+    WRONG_SIG = 2;
+    PREPARING = 3;
+    VALIDATING = 4;
+    TRANSFERING = 5;
   }
 }

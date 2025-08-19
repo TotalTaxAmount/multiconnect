@@ -22,31 +22,12 @@ message P6TransferStatus {
     OK = 0;
     MALFORMED_PACKET = 1;
     WRONG_SIG = 2;
+    VALIDATING = 4;
   }
 }
 
-
-// message TransferStart {
-//   required uint32 id = 1;
-//   required uint64 total_len = 2;
-// }
-
-// message TransferChunk {
-//   required uint32 id = 1;
-//   required uint64 len = 2;
-//   required bytes data = 3;
-// }
-
-// message TransferEnd {
-//   required uint32 id = 1;
-// }
-
-// message TransferStatus {
-//   required uint32 id = 1;
-//   required Status status = 2;
-// }
-
-// enum Status {
-//   OK = 0;
-//   MALFORMED_PACKET = 1;
-// }
+message P7TransferAck {
+  required uint32 id = 1;
+  required string uuid = 2;
+  required uint64 progress = 3;
+}
