@@ -1,14 +1,14 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
+use lazy_static::lazy_static;
 use libp2p::{
   futures::{channel::mpsc, SinkExt, StreamExt},
   PeerId,
 };
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use multiconnect_config::CONFIG;
 use sha2::{Digest, Sha256};
 use std::{
-  collections::HashMap,
   error::Error,
   io::{self, BufReader, Read},
   path::{Path, PathBuf},
@@ -20,12 +20,17 @@ use tokio::{
   fs::{self, File, OpenOptions},
   io::{AsyncReadExt, AsyncWriteExt},
   sync::Mutex,
+  time::Instant,
 };
 use uuid::Uuid;
 
 use multiconnect_core::{
-  generated::{P4TransferStart, P5TransferChunk, P6TransferStatus},
-  local::transfer::{l10_transfer_progress, l11_transfer_status, L10TransferProgress, L11TransferStatus},
+  generated::{P4TransferStart, P5TransferChunk, P6TransferStatus, P7TransferAck},
+  local::transfer::{
+    l10_transfer_progress,
+    l11_transfer_status::{self, LtStatus},
+    L10TransferProgress, L11TransferStatus, L9TransferFile,
+  },
   Packet,
 };
 
@@ -49,7 +54,7 @@ enum TransferDirection {
   Outbound,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct FileTransfer {
   /// The uuid of the transfer
   uuid: Uuid,
@@ -65,6 +70,23 @@ struct FileTransfer {
   hash: Option<String>,
   /// The direction of the transfer
   direction: TransferDirection,
+  /// File handle
+  file_handle: Option<File>,
+}
+
+impl Clone for FileTransfer {
+  fn clone(&self) -> Self {
+    Self {
+      uuid: self.uuid,
+      total_len: self.total_len,
+      processed_len: self.processed_len,
+      peer: self.peer.clone(),
+      file: self.file.clone(),
+      hash: self.hash.clone(),
+      direction: self.direction.clone(),
+      file_handle: None, // File handle should not be cloned, it is only used for writing
+    }
+  }
 }
 
 impl FileTransfer {
@@ -75,8 +97,9 @@ impl FileTransfer {
     file: impl Into<String>,
     hash: Option<String>,
     direction: TransferDirection,
+    file_handle: Option<File>,
   ) -> Self {
-    Self { uuid, total_len: len, processed_len: 0, peer, file: file.into(), hash, direction }
+    Self { uuid, total_len: len, processed_len: 0, peer, file: file.into(), hash, direction, file_handle }
   }
 }
 
@@ -97,13 +120,12 @@ impl FileTransferModule {
   /// Calculate the sha256 checksum of a file
   async fn hash_sha256<P: AsRef<Path>>(path: P) -> std::io::Result<String> {
     debug!("Hashing file: {}", path.as_ref().display());
-    let file = std::fs::File::open(path)?;
-    let mut reader = BufReader::with_capacity(1024 * 1024, file);
+    let mut file = File::open(path).await?;
     let mut hasher = Sha256::new();
-    let mut buf = [0u8; 1024 * 1024];
+    let mut buf = vec![0u8; 2 * 1024 * 1024];
 
     loop {
-      let read = reader.read(&mut buf)?;
+      let read = file.read(&mut buf).await?;
       if read == 0 {
         break;
       }
@@ -161,6 +183,27 @@ impl MulticonnectModule for FileTransferModule {
 
           debug!("Received transfer start from {} for {:?}: uuid = {}", source, path, uuid);
 
+          // Notfiy the frontend that we are transferring a file
+          ctx
+            .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
+              uuid,
+              path.clone(),
+              packet.file_size as u64,
+              0, // We have not processed anything yet
+              l10_transfer_progress::Direction::Inbound,
+            )))
+            .await;
+          ctx.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(uuid, LtStatus::Transfering))).await;
+
+          // create the file handle
+          let file_handle = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&path)
+            .await
+            .map_err(|e| format!("Failed to open file {}: {}", path, e))?;
+
           // Add transfer to know transfers
           self.transfers.insert(
             uuid,
@@ -171,6 +214,7 @@ impl MulticonnectModule for FileTransferModule {
               path,
               Some(packet.signature),
               TransferDirection::Inbound,
+              Some(file_handle),
             ),
           );
         }
@@ -181,21 +225,9 @@ impl MulticonnectModule for FileTransferModule {
         Packet::P6TransferStatus(packet) => match packet.status() {
           // A peer recivied a file successfully
           multiconnect_core::generated::p6_transfer_status::PtStatus::Ok => {
-            // Parse the uuid
-            let uuid = Uuid::from_str(&packet.uuid)?;
-            let file_name =
-              Path::new(&self.transfers.remove(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?.1.file)
-                .file_name()
-                .ok_or("Failed to get filename")?
-                .to_string_lossy()
-                .to_string();
-
-            debug!("Recivied sucesssful status for transfer: {}", file_name);
-
-            // Notify that frontend
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                file_name,
+                Uuid::from_str(&packet.uuid)?,
                 l11_transfer_status::LtStatus::Ok,
               )))
               .await;
@@ -203,27 +235,45 @@ impl MulticonnectModule for FileTransferModule {
           multiconnect_core::generated::p6_transfer_status::PtStatus::MalformedPacket => todo!(),
           // Signatures did not match and the peer did not save the file
           multiconnect_core::generated::p6_transfer_status::PtStatus::WrongSig => {
-            // Parse the uuid
-            let uuid = Uuid::from_str(&packet.uuid)?;
-
-            // Remove the transfer from active transfers
-            let file_name =
-              Path::new(&self.transfers.remove(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?.1.file)
-                .file_name()
-                .ok_or("Failed to get filename")?
-                .to_string_lossy()
-                .to_string();
-
-            // Notify the frontend
+            // Notify the frontend about the failed transfer
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                file_name,
-                l11_transfer_status::LtStatus::InvalidSig,
+                Uuid::from_str(&packet.uuid)?,
+                l11_transfer_status::LtStatus::WrongSig,
+              )))
+              .await;
+          }
+          multiconnect_core::generated::p6_transfer_status::PtStatus::Validating => {
+            // Notify the frontend about the current status
+            ctx
+              .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
+                Uuid::from_str(&packet.uuid)?,
+                l11_transfer_status::LtStatus::Validating,
               )))
               .await;
           }
         },
+        Packet::P7TransferAck(packet) => {
+          // A peer has acknowledged a transfer chunk
+          let uuid = Uuid::from_str(&packet.uuid)?;
+          let mut transfer = self.transfers.get_mut(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?;
 
+          // Update the processed length of the transfer
+          transfer.processed_len = packet.progress as usize;
+
+          debug!("Recivied ack for transfer {}: {} bytes processed", uuid, transfer.processed_len);
+
+          // Notify the frontend about the progress
+          ctx
+            .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
+              transfer.uuid,
+              transfer.file.clone(),
+              transfer.total_len as u64,
+              transfer.processed_len as u64,
+              l10_transfer_progress::Direction::Outbound,
+            )))
+            .await;
+        }
         _ => {}
       }
     }
@@ -231,11 +281,7 @@ impl MulticonnectModule for FileTransferModule {
     Ok(())
   }
 
-  async fn on_frontend_event(
-    &mut self,
-    event: FrontendEvent,
-    _ctx: &mut MulticonnectCtx,
-  ) -> Result<(), Box<dyn Error>> {
+  async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     if let FrontendEvent::RecvPacket(packet) = event {
       match packet {
         Packet::L9TransferFile(packet) => {
@@ -255,6 +301,7 @@ impl MulticonnectModule for FileTransferModule {
             packet.file_path,
             None, /* Hash is none for now */
             TransferDirection::Outbound,
+            None,
           );
 
           self.transfers.insert(uuid, transfer.clone());
@@ -269,8 +316,11 @@ impl MulticonnectModule for FileTransferModule {
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) -> Result<(), Box<dyn Error>> {
     let mut transfer_rx = self.transfer_rx.take().unwrap();
     let mut chunk_rx = self.chunk_rx.take().unwrap();
+    let max_bps = CONFIG.get().unwrap().read().await.get_config().modules.transfer.max_bps;
 
     let transfers = self.transfers.clone();
+
+    let mut bytes_since_last_update = 0;
 
     // Thread to handle reading and writing packets
     tokio::spawn(async move {
@@ -278,6 +328,19 @@ impl MulticonnectModule for FileTransferModule {
         tokio::select! {
           // We have a transfer to send
           transfer = transfer_rx.next() => if let Some(transfer) = transfer {
+
+            debug!("Recivied transfer to send: {:?}", transfer);
+            // Send one progress packet to the frontend
+            ctx.lock().await.send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
+              transfer.uuid,
+              transfer.file.clone(),
+              transfer.total_len as u64,
+              0, // We have not sent anything yet
+              l10_transfer_progress::Direction::Outbound,
+            ))).await;
+            // Notify frontend that we are preparing the transfer
+            ctx.lock().await.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Preparing))).await;
+
             // Now we get the hash when we wont block other things
             let hash = match Self::hash_sha256(&transfer.file).await {
               Ok(hash) => hash,
@@ -287,13 +350,16 @@ impl MulticonnectModule for FileTransferModule {
                 let guard = ctx.lock().await;
                 guard
                   .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                    transfer.file.clone(),
-                    l11_transfer_status::LtStatus::InvalidFile,
+                    transfer.uuid,
+                    l11_transfer_status::LtStatus::WrongSig,
                   )))
                   .await;
                 continue;
               }
             };
+
+            // Notify frontend that we are starting the transfer
+            ctx.lock().await.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Transfering))).await;
 
             debug!("Starting transfer: {}, sig = {}", transfer.file, hash);
 
@@ -329,11 +395,10 @@ impl MulticonnectModule for FileTransferModule {
               // Open the file we want to send
               let mut file = File::open(path).await.map_err(|e| e.to_string())?;
 
+              let mut last_check = Instant::now();
+              let mut allowance = max_bps; // Allowance in bytes
               // Create a buffer to write into
               let mut buf = vec![0u8; chunk_size];
-
-              // Current amout processed
-              let mut processed = 0;
               loop {
                 // Read into the buffer
                 let read = file.read(&mut buf).await.map_err(|e| e.to_string())?;
@@ -342,27 +407,32 @@ impl MulticonnectModule for FileTransferModule {
                   // We have read the whole file
                   break;
                 }
-                // Add the amout read to the total amount processed
-                processed += read as u64;
+                let now = Instant::now();
+                let elapsed = now.duration_since(last_check);
+                last_check = now;
+
+                allowance = (allowance + (elapsed.as_secs_f64() * allowance as f64) as usize)
+                  .min(max_bps);
+
+                if read > allowance {
+                  // We have to wait before sending more data
+                  let wait_time = (read as f64 / max_bps as f64) * 1000.0; // Convert to milliseconds
+                  debug!("Waiting for {} ms", wait_time);
+                  tokio::time::sleep(tokio::time::Duration::from_millis(wait_time as u64)).await;
+                  allowance = 0; // Reset allowance
+                } else {
+                  allowance -= read; // Decrease allowance by the amount we read
+                }
 
                 // Data to send
                 let data = buf[..read].to_vec();
+                buf.resize(chunk_size, 0);
                 let guard = ctx.lock().await;
 
                 // Send chunk to targret peer
                 debug!("Sending chunk with {} bytes", read);
                 guard
                   .send_to_peer(transfer.peer.clone(), Packet::P5TransferChunk(P5TransferChunk::new(transfer.uuid, data)))
-                  .await;
-
-                // Update the frontend progress
-                guard
-                  .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
-                    transfer.file.clone(),
-                    transfer.total_len as u64,
-                    processed,
-                    l10_transfer_progress::Direction::Outbound,
-                  )))
                   .await;
               }
 
@@ -384,8 +454,28 @@ impl MulticonnectModule for FileTransferModule {
               // Get the path to save the file (currenttly it is a temp file) and open it
               let file_clone = transfer.file.clone();
               let path = Path::new(&file_clone);
-              let path_string = path.to_string_lossy().to_string();
-              let mut file = OpenOptions::new().create(true).append(true).open(&path).await.unwrap();
+              let pretty_name = path.file_name().ok_or("Failed to get filename").unwrap().to_string_lossy().strip_suffix(".tmp").unwrap_or("unknown").to_string();
+
+              match transfer.file_handle {
+                Some(ref mut _file) => {
+                  // If the file handle is Some, we can use it
+                  trace!("Using existing file handle for {}", path.display());
+                }
+                None => {
+                  // If the file handle is None, we need to open the file
+                  warn!("File handle is None, opening file {}", path.display());
+                  transfer.file_handle = Some(
+                    OpenOptions::new()
+                      .create(true)
+                      .append(true)
+                      .open(&path)
+                      .await
+                      .map_err(|e| format!("Failed to open file {}: {}", path.display(), e)).unwrap(),
+                  );
+                }
+              }
+
+              let file = transfer.file_handle.as_mut().unwrap();
 
               // Write the data from the chunk packet to the file
               if let Ok(len) = file.write(&chunk_packet.data).await {
@@ -394,6 +484,22 @@ impl MulticonnectModule for FileTransferModule {
 
                 // Check if all data has been transfered
                 if transfer.processed_len == transfer.total_len {
+                  let guard = ctx.lock().await;
+                  // Notfiy peer that the progress is complete
+                  guard.send_to_peer(transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.total_len as u64))).await;
+                  guard.send_to_peer(transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::Validating))).await;
+
+                  // Notify frontend that the transfer is complete
+                  guard.send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
+                    transfer.uuid,
+                    pretty_name,
+                    transfer.total_len as u64,
+                    transfer.total_len as u64,
+                    l10_transfer_progress::Direction::Inbound,
+                  ))).await;
+                  guard.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(uuid, LtStatus::Validating))).await;
+
+                  debug!("Transfer complete, validating file");
                   // Get the real signature
                   let sig = Self::hash_sha256(path).await.unwrap();
                   // Get the expected signature
@@ -412,10 +518,9 @@ impl MulticonnectModule for FileTransferModule {
                     debug!("Successfully saved file ({} bytes)", transfer.total_len);
 
                     // Notify frontend
-                    let guard = ctx.lock().await;
                     guard
                       .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                        path_string,
+                        transfer.uuid,
                         l11_transfer_status::LtStatus::Ok,
                       )))
                       .await;
@@ -424,14 +529,13 @@ impl MulticonnectModule for FileTransferModule {
                   } else {
                     warn!("File signature doesnt match: {} != {}", sig, hash);
                     // Delete whatever was downloaded
-                    let _ = fs::remove_file(path).await;
+                    // let _ = fs::remove_file(path).await;
 
                     // Notify frontend
-                    let guard = ctx.lock().await;
                     guard
                       .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
-                        path_string,
-                        l11_transfer_status::LtStatus::InvalidSig,
+                        transfer.uuid,
+                        l11_transfer_status::LtStatus::WrongSig,
                       )))
                       .await;
 
@@ -440,16 +544,29 @@ impl MulticonnectModule for FileTransferModule {
                   drop(transfer);
                   transfers.remove(&uuid);
                 } else {
+                  // Update sender about the progress if its time
+                  if bytes_since_last_update >= 1024 * 1024 * 4 {
+                    debug!("Sending ack for {} bytes processed", transfer.processed_len);
+                    let guard = ctx.lock().await;
+                    guard
+                      .send_to_peer(transfer.peer.clone(), Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.processed_len as u64)))
+                      .await;
+                    bytes_since_last_update = 0;
+                  } else {
+                    bytes_since_last_update += len;
+                  }
+
                   // Update frontend progress
                   let guard = ctx.lock().await;
-                    guard
-                    .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
-                      path_string,
-                      transfer.total_len as u64,
-                      transfer.processed_len as u64,
-                      l10_transfer_progress::Direction::Inbound,
-                    )))
-                    .await;
+                  guard
+                  .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
+                    transfer.uuid,
+                    pretty_name,
+                    transfer.total_len as u64,
+                    transfer.processed_len as u64,
+                    l10_transfer_progress::Direction::Inbound,
+                  )))
+                  .await;
                 }
               } else {
                 warn!("Failed to write file");

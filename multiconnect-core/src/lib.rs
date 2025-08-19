@@ -8,11 +8,11 @@ use generated::{
     p2p::{peer::*, *},
     shared::peer::*,
   },
-  P4TransferStart, P5TransferChunk, P6TransferStatus,
+  *,
 };
 
 use libp2p::PeerId;
-use log::{error, trace};
+use log::{debug, error, trace};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -99,6 +99,7 @@ pub struct Device {
 
 impl Device {
   pub fn new(peer: PeerId, os_name: String, device_name: String, mc_version: String, device_type: DeviceType) -> Self {
+    debug!("Calling new device");
     Self { peer, os_name, device_name, mc_version, device_type }
   }
 
@@ -155,24 +156,25 @@ impl SavedDevice {
 }
 
 gen_packet_handlers! {
-  P0Ping => 0,
-  P1Acknowledge=> 1,
-  P2PeerPairRequest=>2,
-  P3PeerPairResponse=> 3,
-  P4TransferStart=> 4,
-  P5TransferChunk=> 5,
-  P6TransferStatus=> 6,
-  L0PeerFound=> 7,
-  L1PeerExpired=> 8,
-  L2PeerPairRequest=> 9,
-  L3PeerPairResponse=> 10,
-  L4Refresh=> 11,
-  L7DeviceStatus=> 12,
-  L8DeviceStatusUpdate=> 13,
-  L9TransferFile => 14,
-  L10TransferProgress => 15,
-  L11TransferStatus => 16,
-  S1PeerMeta => 17,
+  P0Ping => 0x0,
+  P1Acknowledge => 1,
+  P2PeerPairRequest => 2,
+  P3PeerPairResponse => 3,
+  P4TransferStart => 4,
+  P5TransferChunk => 5,
+  P6TransferStatus => 6,
+  P7TransferAck => 7,
+  L0PeerFound => 8,
+  L1PeerExpired => 9,
+  L2PeerPairRequest => 10,
+  L3PeerPairResponse => 11,
+  L4Refresh => 12,
+  L7DeviceStatus => 13,
+  L8DeviceStatusUpdate => 14,
+  L9TransferFile => 15,
+  L10TransferProgress => 16,
+  L11TransferStatus => 17,
+  S1PeerMeta => 18,
   D0Debug => 99,
 }
 

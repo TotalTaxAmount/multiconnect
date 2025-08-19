@@ -1,7 +1,9 @@
 use std::{any::Any, error::Error, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
+use bincode::de;
 use libp2p_core::PeerId;
+use log::debug;
 use multiconnect_core::{local::transfer::L9TransferFile, Packet};
 use tauri::{Emitter, State};
 use tokio::sync::Mutex;
@@ -21,13 +23,15 @@ impl FrontendModule for FileTransferModule {
   async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx) -> Result<(), Box<dyn Error>> {
     match packet {
       Packet::L10TransferProgress(packet) => {
+        debug!("File transfer progress: {:?}", packet);
         ctx.app.emit(
           &format!("file_transfer/{}_progress", packet.direction().as_str_name().to_lowercase()),
-          (packet.file_name, packet.total, packet.done),
+          (packet.uuid, packet.file_name, packet.total, packet.done),
         )?;
       }
       Packet::L11TransferStatus(packet) => {
-        ctx.app.emit("file_transfer/status", (&packet.file_name, packet.status()))?;
+        debug!("File transfer status: {:?}", packet);
+        ctx.app.emit("file_transfer/status", (&packet.uuid, packet.status()))?;
       }
       _ => {}
     }

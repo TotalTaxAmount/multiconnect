@@ -90,11 +90,27 @@ impl ConfigManager {
 
   async fn load_config(path: PathBuf) -> Result<Config, Box<dyn Error + Send>> {
     tokio::task::spawn_blocking(move || {
-      let file = File::open(path).unwrap();
+      // If no config file exists, create one with defaults
+      if !path.exists() {
+        let default = Config::default();
+        let f = OpenOptions::new().write(true).truncate(true).create(true).open(&path).unwrap();
+        serde_yml::to_writer(&f, &default).unwrap();
+        return Ok(default);
+      }
 
+      let file = File::open(&path).unwrap();
       file.lock_exclusive().unwrap();
-      let config: Config = serde_yml::from_reader(&file).unwrap();
-      fs2::FileExt::unlock(&file).unwrap();
+
+      let mut config: Config = serde_yml::from_reader(&file).unwrap();
+
+      file.unlock().unwrap();
+
+      let serialized = serde_yml::to_string(&config).unwrap();
+      config = serde_yml::from_str(&serialized).unwrap();
+
+      let f = OpenOptions::new().write(true).truncate(true).create(true).open(&path).unwrap();
+      serde_yml::to_writer(&f, &config).unwrap();
+
       Ok(config)
     })
     .await
