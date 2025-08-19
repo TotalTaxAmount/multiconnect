@@ -13,7 +13,7 @@ rand = "0.9.1"
 serde = { version = "1.0.218", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 prost = "0.14"
-prost-types = "0.13"
+prost-types = "0.14"
 thiserror = "2.0.12"
 uid = "0.1.8"
 libp2p = { version = "0.55.0", features = ["serde"] }
