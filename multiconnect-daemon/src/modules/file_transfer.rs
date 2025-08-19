@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use blake3::Hasher;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use libp2p::{
@@ -7,10 +8,9 @@ use libp2p::{
 };
 use log::{debug, info, trace, warn};
 use multiconnect_config::CONFIG;
-use sha2::{Digest, Sha256};
 use std::{
   error::Error,
-  io::{self, BufReader, Read},
+  io,
   path::{Path, PathBuf},
   str::FromStr,
   sync::Arc,
@@ -18,7 +18,7 @@ use std::{
 };
 use tokio::{
   fs::{self, File, OpenOptions},
-  io::{AsyncReadExt, AsyncWriteExt},
+  io::{AsyncReadExt, AsyncWriteExt, BufReader},
   sync::Mutex,
   time::Instant,
 };
@@ -118,12 +118,11 @@ impl FileTransferModule {
   }
 
   /// Calculate the sha256 checksum of a file
-  async fn hash_sha256<P: AsRef<Path>>(path: P) -> std::io::Result<String> {
+  async fn hash_blake3<P: AsRef<Path>>(path: P) -> std::io::Result<String> {
     debug!("Hashing file: {}", path.as_ref().display());
-    let mut file = File::open(path).await?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 2 * 1024 * 1024];
-
+    let mut file = BufReader::new(File::open(path).await?);
+    let mut hasher = Hasher::new();
+    let mut buf = vec![0u8; 16 * 1024];
     loop {
       let read = file.read(&mut buf).await?;
       if read == 0 {
@@ -131,8 +130,7 @@ impl FileTransferModule {
       }
       hasher.update(&buf[..read]);
     }
-
-    Ok(hex::encode(hasher.finalize()))
+    Ok(hasher.finalize().to_hex().to_string())
   }
 
   /// Generate a unique file path from a file path
@@ -342,7 +340,7 @@ impl MulticonnectModule for FileTransferModule {
             ctx.lock().await.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Preparing))).await;
 
             // Now we get the hash when we wont block other things
-            let hash = match Self::hash_sha256(&transfer.file).await {
+            let hash = match Self::hash_blake3(&transfer.file).await {
               Ok(hash) => hash,
               Err(e) => {
                 warn!("Failed to hash file {}: {}", transfer.file, e);
@@ -501,7 +499,7 @@ impl MulticonnectModule for FileTransferModule {
 
                   debug!("Transfer complete, validating file");
                   // Get the real signature
-                  let sig = Self::hash_sha256(path).await.unwrap();
+                  let sig = Self::hash_blake3(path).await.unwrap();
                   // Get the expected signature
                   let hash = transfer.hash.clone().ok_or("Failed to get hash").unwrap();
 
