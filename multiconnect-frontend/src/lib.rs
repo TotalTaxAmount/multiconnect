@@ -1,7 +1,6 @@
 mod daemon;
 mod modules;
 
-
 use argh::FromArgs;
 use daemon::Daemon;
 use modules::{
