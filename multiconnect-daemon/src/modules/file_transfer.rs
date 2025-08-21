@@ -25,7 +25,7 @@ use tokio::{
 use uuid::Uuid;
 
 use multiconnect_core::{
-  generated::{P4TransferStart, P5TransferChunk, P6TransferStatus, P7TransferAck},
+  generated::{P4TransferStart, P5TransferChunk, P6TransferStatus, P7TransferAck, P8TransferSpeed},
   local::transfer::{
     l10_transfer_progress,
     l11_transfer_status::{self, LtStatus},
@@ -48,7 +48,7 @@ pub struct FileTransferModule {
 
 const METADATA_SIZE: usize = 257;
 const CHUCK_BUFFER_LEN: usize = 100;
-const BYTES_PER_UPDATE: usize = 1024 * 1024 * 4; // 4 MB
+const UPDATE_INTERVAL_SEC: f64 = 0.25; // Update every second
 
 #[derive(Debug, Clone)]
 enum TransferDirection {
@@ -74,6 +74,8 @@ struct FileTransfer {
   direction: TransferDirection,
   /// File handle
   file_handle: Option<File>,
+  /// The current bytes per second we are sending or reciving
+  current_bps: usize,
 }
 
 impl Clone for FileTransfer {
@@ -87,6 +89,7 @@ impl Clone for FileTransfer {
       hash: self.hash.clone(),
       direction: self.direction.clone(),
       file_handle: None, // File handle should not be cloned, it is only used for writing
+      current_bps: self.current_bps,
     }
   }
 }
@@ -100,8 +103,9 @@ impl FileTransfer {
     hash: Option<String>,
     direction: TransferDirection,
     file_handle: Option<File>,
+    current_bps: usize,
   ) -> Self {
-    Self { uuid, total_len: len, processed_len: 0, peer, file: file.into(), hash, direction, file_handle }
+    Self { uuid, total_len: len, processed_len: 0, peer, file: file.into(), hash, direction, file_handle, current_bps }
   }
 }
 
@@ -216,6 +220,7 @@ impl MulticonnectModule for FileTransferModule {
               Some(packet.signature),
               TransferDirection::Inbound,
               Some(file_handle),
+              CONFIG.get().unwrap().read().await.get_config().modules.transfer.max_bps as usize,
             ),
           );
         }
@@ -262,7 +267,7 @@ impl MulticonnectModule for FileTransferModule {
           // Update the processed length of the transfer
           transfer.processed_len = packet.progress as usize;
 
-          debug!("Recivied ack for transfer {}: {} bytes processed", uuid, transfer.processed_len);
+          trace!("Recivied ack for transfer {}: {} bytes processed", uuid, transfer.processed_len);
 
           // Notify the frontend about the progress
           ctx
@@ -274,6 +279,15 @@ impl MulticonnectModule for FileTransferModule {
               l10_transfer_progress::Direction::Outbound,
             )))
             .await;
+        }
+        Packet::P8TransferSpeed(packet) => {
+          let uuid = Uuid::from_str(&packet.uuid)?;
+          if let Some(mut transfer) = self.transfers.get_mut(&uuid) {
+            transfer.current_bps = packet.speed_bps as usize;
+            debug!("Recivied transfer speed for {}: {} B/s", uuid, transfer.current_bps);
+          } else {
+            warn!("Recivied transfer speed for unknown transfer {}", uuid);
+          }
         }
         _ => {}
       }
@@ -303,6 +317,7 @@ impl MulticonnectModule for FileTransferModule {
             None, /* Hash is none for now */
             TransferDirection::Outbound,
             None,
+            CONFIG.get().unwrap().read().await.get_config().modules.transfer.max_bps as usize,
           );
 
           self.transfers.insert(uuid, transfer.clone());
@@ -326,6 +341,7 @@ impl MulticonnectModule for FileTransferModule {
     // Thread to handle reading and writing packets
     tokio::spawn(async move {
       let mut chunk_buffer = Vec::with_capacity(CHUCK_BUFFER_LEN);
+      let mut last_write_check = Instant::now();
 
       loop {
         tokio::select! {
@@ -371,7 +387,7 @@ impl MulticonnectModule for FileTransferModule {
               // Get this size for a chunk, make sure to leave room for the reset of the transfer packet
               let chunk_size = u16::MAX as usize - METADATA_SIZE;
               let ctx = ctx.clone();
-              let transfer_clone = transfer.clone();
+              // let transfer_clone = transfer.clone();
 
               // Do the acuall transfer
               let result: Result<(), String> = async move {
@@ -384,7 +400,7 @@ impl MulticonnectModule for FileTransferModule {
                   .lock()
                   .await
                   .send_to_peer(
-                    transfer.peer,
+                    &transfer.peer,
                     Packet::P4TransferStart(P4TransferStart::new(
                       transfer.total_len as u64,
                       transfer.file.clone(),
@@ -399,9 +415,10 @@ impl MulticonnectModule for FileTransferModule {
                 let mut file = File::open(path).await.map_err(|e| e.to_string())?;
 
                 let mut last_check = Instant::now();
-                let mut allowance = max_bps; // Allowance in bytes
                 // Create a buffer to write into
                 let mut buf = vec![0u8; chunk_size];
+                let mut allowance = transfer.current_bps;
+                let trasnfer_uuid = transfer.uuid.clone();
 
                 loop {
                   // Read into the buffer
@@ -411,17 +428,20 @@ impl MulticonnectModule for FileTransferModule {
                     // We have read the whole file
                     break;
                   }
+
                   let now = Instant::now();
                   let elapsed = now.duration_since(last_check);
                   last_check = now;
 
-                  allowance = (allowance + (elapsed.as_secs_f64() * allowance as f64) as usize)
-                    .min(max_bps);
+                  let current_bps = transfer.current_bps;
+
+                  allowance = (allowance + (elapsed.as_secs_f64() * current_bps as f64) as usize).min(current_bps);
+                  trace!("Allowance: {}, read: {}, current_bps: {}, elapsed: {:?}", allowance, read, current_bps, elapsed);
 
                   if read > allowance {
                     // We have to wait before sending more data
                     let wait_time = (read as f64 / max_bps as f64) * 1000.0; // Convert to milliseconds
-                    debug!("Waiting for {} ms", wait_time);
+                    trace!("Waiting for {} ms", wait_time);
                     tokio::time::sleep(tokio::time::Duration::from_millis(wait_time as u64)).await;
                     allowance = 0; // Reset allowance
                   } else {
@@ -434,9 +454,9 @@ impl MulticonnectModule for FileTransferModule {
                   let guard = ctx.lock().await;
 
                   // Send chunk to targret peer
-                  debug!("Sending chunk with {} bytes", read);
+                  trace!("Sending chunk with {} bytes", read);
                   guard
-                    .send_to_peer(transfer.peer.clone(), Packet::P5TransferChunk(P5TransferChunk::new(transfer.uuid, data)))
+                    .send_to_peer(&transfer.peer, Packet::P5TransferChunk(P5TransferChunk::new(trasnfer_uuid, data)))
                     .await;
                 }
 
@@ -444,12 +464,14 @@ impl MulticonnectModule for FileTransferModule {
               }.await;
 
               if let Err(e) = result {
-                warn!("Failed to send file {} to peer {}: {}", transfer_clone.file, transfer_clone.peer, e);
+                warn!("Failed to send file to peer {}: {}", &transfer.peer, e);
               }
             },
             // Received a chunk for an incoming transfer
             _ = chunk_rx.recv_many(&mut chunk_buffer, CHUCK_BUFFER_LEN) => {
-              debug!("Processing {} chunks", chunk_buffer.len());
+              if chunk_buffer.len() > 1 {
+                  debug!("Processing {} chunks", chunk_buffer.len());
+              }
               for chunk_packet in chunk_buffer.drain(..) {
                 // Get the uuid of the transfer from the packet
                 let uuid = Uuid::from_str(&chunk_packet.uuid).unwrap();
@@ -486,15 +508,23 @@ impl MulticonnectModule for FileTransferModule {
                   if let Ok(len) = file.write(&chunk_packet.data).await {
                     // Update transfer progress
                     transfer.processed_len += len;
+                    bytes_since_last_update += len;
 
-                    // Update sender about the progress if its time
-                    if bytes_since_last_update >= BYTES_PER_UPDATE || transfer.processed_len == transfer.total_len {
-                      debug!("Sending ack for {} bytes processed", transfer.processed_len);
+                    let now = Instant::now();
+                    let elapsed = now.duration_since(last_write_check);
+
+                    if elapsed.as_secs_f64() > UPDATE_INTERVAL_SEC || transfer.processed_len == transfer.total_len {
+                      let bps = (bytes_since_last_update as f64 / elapsed.as_secs_f64()) as u64;
+                      debug!("Transfer speed: {} B/s", bps);
+
                       let guard = ctx.lock().await;
+                      // Notify the peer about the transfer speed
                       guard
-                        .send_to_peer(transfer.peer.clone(), Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.processed_len as u64)))
+                        .send_to_peer(&transfer.peer, Packet::P8TransferSpeed(P8TransferSpeed::new(uuid, bps)))
                         .await;
-
+                      guard
+                        .send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.processed_len as u64)))
+                        .await;
                       guard
                         .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
                           transfer.uuid,
@@ -503,17 +533,18 @@ impl MulticonnectModule for FileTransferModule {
                           transfer.processed_len as u64,
                           l10_transfer_progress::Direction::Inbound,
                         ))).await;
-                      bytes_since_last_update = 0;
-                    } else {
-                      bytes_since_last_update += len;
+                      last_write_check = now;
+                      bytes_since_last_update = 0; // Reset the bytes since last update
+
                     }
+
 
                     // Check if all data has been transfered
                     if transfer.processed_len == transfer.total_len {
                       let guard = ctx.lock().await;
                       // Notify peer that the progress is complete
-                      guard.send_to_peer(transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.total_len as u64))).await;
-                      guard.send_to_peer(transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::Validating))).await;
+                      guard.send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.total_len as u64))).await;
+                      guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::Validating))).await;
 
                       // Notify frontend that the transfer is complete
                       guard.send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
@@ -551,7 +582,7 @@ impl MulticonnectModule for FileTransferModule {
                           )))
                           .await;
 
-                        guard.send_to_peer(transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::Ok))).await;
+                        guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::Ok))).await;
                       } else {
                         warn!("File signature doesnt match: {} != {}", sig, hash);
                         // Delete whatever was downloaded
@@ -565,7 +596,7 @@ impl MulticonnectModule for FileTransferModule {
                           )))
                           .await;
 
-                        guard.send_to_peer(transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::WrongSig))).await;
+                        guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::WrongSig))).await;
                       }
                       drop(transfer);
                       transfers.remove(&uuid);

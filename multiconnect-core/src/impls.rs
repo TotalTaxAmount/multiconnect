@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::{
   generated::{
     p6_transfer_status::PtStatus, D0Debug, P4TransferStart, P5TransferChunk, P6TransferStatus, P7TransferAck,
+    P8TransferSpeed,
   },
   local::{
     peer::*,
@@ -66,6 +67,12 @@ impl P6TransferStatus {
 impl P7TransferAck {
   pub fn new(uuid: Uuid, progress: u64) -> Self {
     Self { id: Packet::create_id(), uuid: uuid.to_string(), progress }
+  }
+}
+
+impl P8TransferSpeed {
+  pub fn new(uuid: Uuid, speed_bps: u64) -> Self {
+    Self { id: Packet::create_id(), uuid: uuid.to_string(), speed_bps }
   }
 }
 

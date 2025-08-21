@@ -5,7 +5,7 @@ pub mod store;
 
 use async_trait::async_trait;
 use libp2p::PeerId;
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use multiconnect_core::{Device, Packet, SavedDevice};
 use std::{collections::HashMap, error::Error, sync::Arc};
 use store::Store;
@@ -69,8 +69,8 @@ impl MulticonnectCtx {
   }
 
   /// Send a packet to a peer
-  pub async fn send_to_peer(&self, target: PeerId, packet: Packet) {
-    let _ = self.action_tx.send(Action::SendPeer(target, packet)).await;
+  pub async fn send_to_peer(&self, target: &PeerId, packet: Packet) {
+    let _ = self.action_tx.send(Action::SendPeer(*target, packet)).await;
   }
 
   pub async fn open_stream(&self, peer_id: PeerId) {
@@ -205,7 +205,7 @@ impl ModuleManager {
       loop {
         tokio::select! {
           event = recv_frontend_packet_rx.recv() => if let Ok(event) = event {
-            debug!("Calling on_frontend_event");
+            trace!("Calling on_frontend_event");
             let mut ctx = ctx.lock().await;
             for module in modules.iter_mut() {
               if let Err(e) = module.on_frontend_event(event.clone(), &mut ctx).await {
@@ -213,22 +213,22 @@ impl ModuleManager {
               }
             }
 
-            debug!("Done calling on_frontend_event");
+            trace!("Done calling on_frontend_event");
           },
 
           event = recv_peer_packet_rx.recv() => match event {
             Ok(event) => {
-              debug!("Calling on_network_event");
+              trace!("Calling on_network_event");
               let mut ctx = ctx.lock().await;
               for module in modules.iter_mut() {
                 if let Err(e) = module.on_network_event(event.clone(), &mut ctx).await {
                   warn!("Error while running modules (on_network_event): {}", e);
                 }
               }
-              debug!("Done calling on_network_event");
+              trace!("Done calling on_network_event");
             }
             Err(e) => {
-              error!("Error receiving peer packet channel {}", e);
+              trace!("Error receiving peer packet channel {}", e);
             }
           },
 

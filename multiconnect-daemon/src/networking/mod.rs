@@ -23,6 +23,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::networking::protocols::StreamProtocolBehavior;
 
+const COMMAND_BATCH_MAX: usize = 50;
+
 /// Has to be seperate because `ResponseChannel` is not `Clone`
 #[derive(Debug)]
 pub enum PairingProtocolEvent {
@@ -156,6 +158,7 @@ impl NetworkManager {
     }
 
     let _ = tokio::spawn(async move {
+      let mut command_buffer = Vec::with_capacity(COMMAND_BATCH_MAX);
       loop {
         tokio::select! {
           event = swarm.select_next_some() => match event {
@@ -210,11 +213,12 @@ impl NetworkManager {
               trace!("Event: {:?}", event);
             },
           },
-          cmd = command_rx.recv() => if let Some(cmd) = cmd {
-            Self::process_command(&mut swarm, cmd);
+          _ = command_rx.recv_many(&mut command_buffer, COMMAND_BATCH_MAX) => {
+            if command_buffer.len() > 1 {
+              debug!("Processing {} commands", command_buffer.len());
+            }
 
-            while let Ok(cmd) = command_rx.try_recv() {
-              debug!("Processing batch command");
+            for cmd in command_buffer.drain(..) {
               Self::process_command(&mut swarm, cmd);
             }
           },
@@ -249,7 +253,7 @@ impl NetworkManager {
         debug!("Sending pairing protocol request to {}", peer_id);
         swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
       }
-      NetworkCommand::SendPairingProtocolResponse(channel, packet) =>
+      NetworkCommand::SendPairingProtocolResponse(channel, packet) => {
         if channel.is_open() {
           debug!("Sending pairing protocol response");
           if let Err(_packet) = swarm.behaviour_mut().pairing_protocol.send_response(channel, packet) {
@@ -257,7 +261,8 @@ impl NetworkManager {
           }
         } else {
           warn!("Cannot send response on closed channel");
-        },
+        }
+      }
       NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted) => {
         debug!("Updating whitelist for {}: {}", peer_id, is_whitelisted);
         if is_whitelisted {

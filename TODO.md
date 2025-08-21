@@ -13,7 +13,8 @@
 
 ## Desktop
 
-- File Transfer: Use a dynamic max speed for sending files based of the write speed of the receivier
+- File Transfer: Use a dynamic max speed for sending files based of the write speed of the receivier (needs testing)
+- File Transfer: Compress transfers
 - Fix peer refresh (store a devices online status somewhere, ideally not in the saved peers json)
 
 ## Android

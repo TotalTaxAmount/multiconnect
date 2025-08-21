@@ -156,7 +156,7 @@ impl SavedDevice {
 }
 
 gen_packet_handlers! {
-  P0Ping => 0x0,
+  P0Ping => 0,
   P1Acknowledge => 1,
   P2PeerPairRequest => 2,
   P3PeerPairResponse => 3,
@@ -164,17 +164,18 @@ gen_packet_handlers! {
   P5TransferChunk => 5,
   P6TransferStatus => 6,
   P7TransferAck => 7,
-  L0PeerFound => 8,
-  L1PeerExpired => 9,
-  L2PeerPairRequest => 10,
-  L3PeerPairResponse => 11,
-  L4Refresh => 12,
-  L7DeviceStatus => 13,
-  L8DeviceStatusUpdate => 14,
-  L9TransferFile => 15,
-  L10TransferProgress => 16,
-  L11TransferStatus => 17,
-  S1PeerMeta => 18,
+  P8TransferSpeed => 8,
+  L0PeerFound => 9,
+  L1PeerExpired => 10,
+  L2PeerPairRequest => 11,
+  L3PeerPairResponse => 12,
+  L4Refresh => 13,
+  L7DeviceStatus => 14,
+  L8DeviceStatusUpdate => 15,
+  L9TransferFile => 16,
+  L10TransferProgress => 17,
+  L11TransferStatus => 18,
+  S1PeerMeta => 19,
   D0Debug => 99,
 }
 
