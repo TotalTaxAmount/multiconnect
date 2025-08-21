@@ -2,7 +2,7 @@
 
 ---
 
-## This project is in its infancy and does not function yet
+## This project is still in Development and does not fully work
 
 Sync Android and Linux (maybe Windows?) devices
 
