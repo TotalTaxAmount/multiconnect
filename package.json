@@ -18,7 +18,7 @@
     "@tauri-apps/plugin-dialog": "~2",
     "@tauri-apps/plugin-opener": "^2",
     "autoprefixer": "^10.4.21",
-    "pino": "^9.6.0",
+    "pino": "^9.9.0",
     "pino-pretty": "^13.0.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.10"
