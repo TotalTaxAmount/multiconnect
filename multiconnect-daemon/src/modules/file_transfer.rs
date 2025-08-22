@@ -18,7 +18,7 @@ use std::{
 };
 use tokio::{
   fs::{self, File, OpenOptions},
-  io::{AsyncReadExt, AsyncWriteExt, BufReader},
+  io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
   sync::{mpsc, Mutex},
   time::Instant,
 };
@@ -47,8 +47,10 @@ pub struct FileTransferModule {
 }
 
 const METADATA_SIZE: usize = 257;
+const CHUNK_SIZE: usize = u16::MAX as usize - METADATA_SIZE;
 const CHUCK_BUFFER_LEN: usize = 100;
-const UPDATE_INTERVAL_SEC: f64 = 0.25; // Update every second
+const UPDATE_INTERVAL_SEC: f64 = 0.25;
+const CHUNKS_PER_OPERATION: usize = 40; // How many chunks to read/write at once
 
 #[derive(Debug, Clone)]
 enum TransferDirection {
@@ -73,7 +75,7 @@ struct FileTransfer {
   /// The direction of the transfer
   direction: TransferDirection,
   /// File handle
-  file_handle: Option<File>,
+  file_handle: Option<BufWriter<File>>,
   /// The current bytes per second we are sending or reciving
   current_bps: usize,
 }
@@ -102,7 +104,7 @@ impl FileTransfer {
     file: impl Into<String>,
     hash: Option<String>,
     direction: TransferDirection,
-    file_handle: Option<File>,
+    file_handle: Option<BufWriter<File>>,
     current_bps: usize,
   ) -> Self {
     Self { uuid, total_len: len, processed_len: 0, peer, file: file.into(), hash, direction, file_handle, current_bps }
@@ -201,13 +203,16 @@ impl MulticonnectModule for FileTransferModule {
           ctx.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(uuid, LtStatus::Transfering))).await;
 
           // create the file handle
-          let file_handle = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&path)
-            .await
-            .map_err(|e| format!("Failed to open file {}: {}", path, e))?;
+          let file_handle = BufWriter::with_capacity(
+            CHUNK_SIZE * CHUNKS_PER_OPERATION,
+            OpenOptions::new()
+              .create(true)
+              .truncate(true)
+              .write(true)
+              .open(&path)
+              .await
+              .map_err(|e| format!("Failed to open file {}: {}", path, e))?,
+          );
 
           // Add transfer to know transfers
           self.transfers.insert(
@@ -284,7 +289,7 @@ impl MulticonnectModule for FileTransferModule {
           let uuid = Uuid::from_str(&packet.uuid)?;
           if let Some(mut transfer) = self.transfers.get_mut(&uuid) {
             transfer.current_bps = packet.speed_bps as usize;
-            debug!("Recivied transfer speed for {}: {} B/s", uuid, transfer.current_bps);
+            trace!("Recivied transfer speed for {}: {} B/s", uuid, transfer.current_bps);
           } else {
             warn!("Recivied transfer speed for unknown transfer {}", uuid);
           }
@@ -332,7 +337,6 @@ impl MulticonnectModule for FileTransferModule {
   async fn init(&mut self, ctx: Arc<Mutex<MulticonnectCtx>>) -> Result<(), Box<dyn Error>> {
     let mut transfer_rx = self.transfer_rx.take().unwrap();
     let mut chunk_rx = self.chunk_rx.take().unwrap();
-    let max_bps = CONFIG.get().unwrap().read().await.get_config().modules.transfer.max_bps;
 
     let transfers = self.transfers.clone();
 
@@ -385,7 +389,6 @@ impl MulticonnectModule for FileTransferModule {
               // Create a uuid for this transfer
 
               // Get this size for a chunk, make sure to leave room for the reset of the transfer packet
-              let chunk_size = u16::MAX as usize - METADATA_SIZE;
               let ctx = ctx.clone();
               // let transfer_clone = transfer.clone();
 
@@ -412,56 +415,76 @@ impl MulticonnectModule for FileTransferModule {
 
 
                 // Open the file we want to send
-                let mut file = File::open(path).await.map_err(|e| e.to_string())?;
+                let mut file = BufReader::with_capacity(CHUNK_SIZE * CHUNKS_PER_OPERATION,File::open(path).await.map_err(|e| e.to_string())?);
 
                 let mut last_check = Instant::now();
                 // Create a buffer to write into
-                let mut buf = vec![0u8; chunk_size];
+                let mut buf = vec![0u8; CHUNK_SIZE * CHUNKS_PER_OPERATION];
                 let mut allowance = transfer.current_bps;
                 let trasnfer_uuid = transfer.uuid.clone();
 
+                let mut to_send = Vec::with_capacity(CHUNKS_PER_OPERATION);
                 loop {
                   // Read into the buffer
-                  let read = file.read(&mut buf).await.map_err(|e| e.to_string())?;
-                  if read == 0 {
+                  let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
+                  if n == 0 {
                     debug!("Done reading file");
-                    // We have read the whole file
                     break;
                   }
 
                   let now = Instant::now();
                   let elapsed = now.duration_since(last_check);
                   last_check = now;
+                  allowance = (allowance + (elapsed.as_secs_f64() * transfer.current_bps as f64) as usize).min(transfer.current_bps);
 
-                  let current_bps = transfer.current_bps;
+                  let mut offset = 0;
+                  while offset < n {
+                    let end = (offset + CHUNK_SIZE).min(n);
+                    let chunk = &buf[offset..end];
+                    offset = end;
 
-                  allowance = (allowance + (elapsed.as_secs_f64() * current_bps as f64) as usize).min(current_bps);
-                  trace!("Allowance: {}, read: {}, current_bps: {}, elapsed: {:?}", allowance, read, current_bps, elapsed);
+                    if chunk.len() > allowance {
+                      let wait_time = ((chunk.len() - allowance) as f64 / transfer.current_bps as f64 * 1000f64) as u64;
+                      trace!("Throttling transfer for {} seconds", wait_time);
+                      tokio::time::sleep(tokio::time::Duration::from_millis(wait_time)).await;
+                      allowance = 0;
+                    } else {
+                      allowance -= chunk.len();
+                    }
 
-                  if read > allowance {
-                    // We have to wait before sending more data
-                    let wait_time = (read as f64 / max_bps as f64) * 1000.0; // Convert to milliseconds
-                    trace!("Waiting for {} ms", wait_time);
-                    tokio::time::sleep(tokio::time::Duration::from_millis(wait_time as u64)).await;
-                    allowance = 0; // Reset allowance
-                  } else {
-                    allowance -= read; // Decrease allowance by the amount we read
+                    to_send.push(P5TransferChunk::new(trasnfer_uuid, chunk.to_vec()));
+
+                    // Data to send
+                    // let guard = ctx.lock().await;
+
+
+                    // Send chunk to targret peer
+                    // trace!("Sending chunk with {} bytes", chunk.len());
+                    // guard
+                    //   .send_to_peer(&transfer.peer, Packet::P5TransferChunk(P5TransferChunk::new(trasnfer_uuid, data)))
+                    //   .await;
+
+                    if to_send.len() >= CHUNKS_PER_OPERATION {
+                      let guard = ctx.lock().await;
+                      for chunk in to_send.drain(..) {
+                        trace!("Sending chunk with {} bytes", chunk.data.len());
+                        guard.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
+                      }
+                    }
                   }
+                }
 
-                  // Data to send
-                  let data = buf[..read].to_vec();
-                  buf.resize(chunk_size, 0);
-                  let guard = ctx.lock().await;
-
-                  // Send chunk to targret peer
-                  trace!("Sending chunk with {} bytes", read);
-                  guard
-                    .send_to_peer(&transfer.peer, Packet::P5TransferChunk(P5TransferChunk::new(trasnfer_uuid, data)))
-                    .await;
+                // Send any remaining chunks
+                let guard = ctx.lock().await;
+                debug!("Sending {} remaining chunks", to_send.len());
+                for chunk in to_send.drain(..) {
+                  trace!("Sending chunk with {} bytes", chunk.data.len());
+                  guard.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
                 }
 
                 Ok(())
               }.await;
+
 
               if let Err(e) = result {
                 warn!("Failed to send file to peer {}: {}", &transfer.peer, e);
@@ -491,14 +514,14 @@ impl MulticonnectModule for FileTransferModule {
                     None => {
                       // If the file handle is None, we need to open the file
                       warn!("File handle is None, opening file {}", path.display());
-                      transfer.file_handle = Some(
+                      transfer.file_handle = Some(BufWriter::with_capacity(CHUNK_SIZE * CHUNKS_PER_OPERATION,
                         OpenOptions::new()
                           .create(true)
                           .append(true)
                           .open(&path)
                           .await
                           .map_err(|e| format!("Failed to open file {}: {}", path.display(), e)).unwrap(),
-                      );
+                      ));
                     }
                   }
 
@@ -515,7 +538,7 @@ impl MulticonnectModule for FileTransferModule {
 
                     if elapsed.as_secs_f64() > UPDATE_INTERVAL_SEC || transfer.processed_len == transfer.total_len {
                       let bps = (bytes_since_last_update as f64 / elapsed.as_secs_f64()) as u64;
-                      debug!("Transfer speed: {} B/s", bps);
+                      trace!("Transfer speed: {} B/s", bps);
 
                       let guard = ctx.lock().await;
                       // Notify the peer about the transfer speed
@@ -538,7 +561,6 @@ impl MulticonnectModule for FileTransferModule {
 
                     }
 
-
                     // Check if all data has been transfered
                     if transfer.processed_len == transfer.total_len {
                       let guard = ctx.lock().await;
@@ -557,7 +579,9 @@ impl MulticonnectModule for FileTransferModule {
                       guard.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(uuid, LtStatus::Validating))).await;
 
                       debug!("Transfer complete, validating file");
+
                       // Get the real signature
+                      transfer.file_handle.take().unwrap().flush().await.unwrap();
                       let sig = Self::hash_blake3(path).await.unwrap();
                       // Get the expected signature
                       let hash = transfer.hash.clone().ok_or("Failed to get hash").unwrap();

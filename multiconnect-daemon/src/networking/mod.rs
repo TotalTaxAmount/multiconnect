@@ -215,7 +215,7 @@ impl NetworkManager {
           },
           _ = command_rx.recv_many(&mut command_buffer, COMMAND_BATCH_MAX) => {
             if command_buffer.len() > 1 {
-              debug!("Processing {} commands", command_buffer.len());
+              trace!("Processing {} commands", command_buffer.len());
             }
 
             for cmd in command_buffer.drain(..) {
