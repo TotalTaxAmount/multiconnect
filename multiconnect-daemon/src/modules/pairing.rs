@@ -108,6 +108,8 @@ impl MulticonnectModule for PairingModule {
         } else {
           ctx.send_to_frontend(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await;
         }
+
+        ctx.close_stream(peer_id).await;
       }
       NetworkEvent::PeerDiscoverd(peer_id) => {
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
