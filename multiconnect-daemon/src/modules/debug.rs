@@ -23,7 +23,7 @@ impl DebugModule {
 impl MulticonnectModule for DebugModule {
   async fn on_frontend_event(&mut self, event: FrontendEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     match event {
-      FrontendEvent::RecvPacket(packet) => {
+      FrontendEvent::RecvPacket(packet) =>
         if let Packet::D0Debug(debug) = packet {
           let (cmd, peer_id) = debug.debug.split_once(':').unwrap();
           let peer_id = PeerId::from_str(peer_id).unwrap();
@@ -33,8 +33,7 @@ impl MulticonnectModule for DebugModule {
             "close-stream" => ctx.close_stream(peer_id).await,
             _ => {}
           };
-        }
-      }
+        },
       _ => {}
     };
 

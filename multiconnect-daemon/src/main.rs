@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
   ConfigManager::init().await;
   let daemon = Daemon::new(args.port).await?;
 
-  let mut network_manager = NetworkManager::new().await;
+  let mut network_manager = NetworkManager::new().await?;
   let pairing_module =
     PairingModule::new(network_manager.send_command_channel(), network_manager.get_mc_event_recv().unwrap()).await;
   let module_manager = Box::leak(Box::new(ModuleManager::new(network_manager, daemon.clone()).await));
