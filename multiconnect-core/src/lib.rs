@@ -38,7 +38,8 @@ macro_rules! gen_packet_handlers {
           $(
             Packet::$variant(inner) => {
               buf.push($tag);
-              inner.encode(buf).map_err(|_| PacketError::EncodeError)
+              inner.encode(buf)?;
+              Ok(())
             }
           ),*
         }
@@ -49,8 +50,7 @@ macro_rules! gen_packet_handlers {
         match packet_type {
           $(
             $tag => {
-              let pkt = $variant::decode(data)
-                .map_err(|_| PacketError::MalformedPacket)?;
+              let pkt = $variant::decode(data)?;
               Ok(Packet::$variant(pkt))
             }
           ),*
@@ -65,7 +65,7 @@ macro_rules! gen_packet_handlers {
   }
 }
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Error)]
 pub enum PacketError {
   #[error("Malformed packet")]
   MalformedPacket,
@@ -73,11 +73,19 @@ pub enum PacketError {
   InvalidPacket(String),
   #[error("Failed to encode packet")]
   EncodeError,
+  #[error("I/O error: {0}")]
+  Io(#[from] std::io::Error),
 }
 
-impl From<std::io::Error> for PacketError {
-  fn from(value: std::io::Error) -> Self {
-    todo!()
+impl From<prost::DecodeError> for PacketError {
+  fn from(_value: prost::DecodeError) -> Self {
+    PacketError::MalformedPacket
+  }
+}
+
+impl From<prost::EncodeError> for PacketError {
+  fn from(_value: prost::EncodeError) -> Self {
+    PacketError::EncodeError
   }
 }
 

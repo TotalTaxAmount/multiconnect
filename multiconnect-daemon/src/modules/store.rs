@@ -8,6 +8,7 @@ use libp2p::PeerId;
 use log::error;
 use multiconnect_config::CONFIG;
 use multiconnect_core::SavedDevice;
+use thiserror::Error;
 
 const FILENAME: &str = "saved_devices.json";
 
@@ -15,40 +16,55 @@ pub struct Store {
   devices: HashMap<PeerId, SavedDevice>,
 }
 
+#[derive(Debug, Error)]
+pub enum StoreError {
+  #[error("I/O error: {0}")]
+  Io(#[from] tokio::io::Error),
+
+  #[error("Serde error: {0}")]
+  SerdeError(#[from] serde_json::Error),
+
+  #[error("Failed to load devices: {0}")]
+  LoadError(String),
+}
+
 impl Store {
-  pub async fn new() -> Self {
-    Self { devices: Self::load().await }
+  pub async fn new() -> Result<Self, StoreError> {
+    Ok(Self { devices: Self::load().await? })
   }
 
-  async fn load() -> HashMap<PeerId, SavedDevice> {
+  async fn load() -> Result<HashMap<PeerId, SavedDevice>, StoreError> {
     let cfg = CONFIG.get().unwrap();
     let path = cfg.read().await.get_config_dir().join(FILENAME);
     if !path.exists() {
-      return HashMap::new();
+      return Ok(HashMap::new());
     }
 
-    let mut file = File::open(&path).unwrap();
+    let mut file = File::open(&path)?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).unwrap();
+    file.read_to_end(&mut buf)?;
 
     let raw = String::from_utf8(buf).unwrap();
 
     if let Ok(saved_devices) = serde_json::from_str(&raw) {
-      return saved_devices;
+      return Ok(saved_devices);
     } else {
-      error!("Failed to read saved saved_devices from file");
+      // error!("Failed to read saved saved_devices from file");
       let _ = remove_file(path);
-      return HashMap::new();
+      // return Ok(HashMap::new());
+      return Err(StoreError::LoadError("Failed to read saved devices from file".to_string()));
     }
   }
 
-  pub async fn save(&self) {
+  pub async fn save(&self) -> Result<(), StoreError> {
     let cfg = CONFIG.get().unwrap();
     let file = cfg.read().await.get_config_dir().join(FILENAME);
-    let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(file).unwrap();
+    let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(file)?;
 
-    let json = serde_json::to_string(&self.devices).unwrap();
-    file.write_all(&json.as_bytes()).unwrap();
+    let json = serde_json::to_string(&self.devices)?;
+    file.write_all(&json.as_bytes())?;
+
+    Ok(())
   }
 
   pub fn save_device(&mut self, peer_id: PeerId, device: SavedDevice) {

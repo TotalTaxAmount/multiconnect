@@ -53,7 +53,7 @@ pub struct MulticonnectCtx {
 impl MulticonnectCtx {
   /// Create a new instance of `MulticonnectCtx` <br />
   pub async fn new(send_packet_tx: mpsc::Sender<Action>, this_device: Device) -> Self {
-    let store = Store::new().await;
+    let store = Store::new().await.unwrap();
     let mut map = HashMap::new();
     let saved_devices = store.get_saved_devices();
 

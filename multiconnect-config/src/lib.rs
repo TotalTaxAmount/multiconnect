@@ -1,18 +1,17 @@
 mod configs;
 
-use std::{
-  error::Error,
-  fs::{self, File, OpenOptions},
-  path::PathBuf,
-  process::exit,
-  str::{self, FromStr},
-};
-
 use configs::{FrontendConfig, ModuleConfig};
 use fs2::FileExt;
 use log::{debug, error, info};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+use std::{
+  fs::{self, File, OpenOptions},
+  path::{Path, PathBuf},
+  process::exit,
+  str::FromStr,
+};
+use thiserror::Error;
 use tokio::sync::RwLock;
 
 pub static CONFIG: OnceCell<RwLock<ConfigManager>> = OnceCell::new();
@@ -31,121 +30,114 @@ pub struct Config {
   pub modules: ModuleConfig,
 }
 
+#[derive(Debug, Error)]
+pub enum ConfigError {
+  #[error("I/O error: {0}")]
+  Io(#[from] std::io::Error),
+
+  #[error("Serialization error: {0}")]
+  Serialize(#[from] serde_yml::Error),
+
+  #[error("Config directory could not be determined")]
+  ConfigDirNotFound,
+}
+
 impl ConfigManager {
-  async fn new() -> std::io::Result<Self> {
-    let path: PathBuf;
-
-    if let Ok(other) = std::env::var("MC_CONFIG_DIR") {
-      path = PathBuf::from_str(&other).unwrap();
+  pub async fn new() -> Result<Self, ConfigError> {
+    let path = if let Ok(other) = std::env::var("MC_CONFIG_DIR") {
+      PathBuf::from_str(&other).unwrap() // safe: env var is UTF-8
     } else {
-      path = dirs::config_dir().unwrap().join("multiconnect");
-    }
+      dirs::config_dir().ok_or(ConfigError::ConfigDirNotFound)?.join("multiconnect")
+    };
 
-    let config_file_path = path.clone().join("config.yml");
+    let config_file_path = path.join("config.yml");
 
     if !path.exists() {
-      if let Err(e) = fs::create_dir_all(&path) {
-        error!("Failed to create config dir: {}", e);
-        exit(1);
-      }
+      fs::create_dir_all(&path)?;
     }
 
     if !config_file_path.exists() {
-      info!("Creating new config file: {}", config_file_path.to_str().unwrap());
+      info!("Creating new config file: {}", config_file_path.to_string_lossy());
       Self::create_default_config(&config_file_path)?;
     }
 
-    if let Ok(config) = Self::load_config(config_file_path).await {
-      Ok(Self { config_path: path, config })
-    } else {
-      error!("Failed to load config");
-      exit(-1)
-    }
+    let config = Self::load_config(config_file_path).await?;
+
+    Ok(Self { config_path: path, config })
   }
 
   pub async fn init() {
-    let cfg = ConfigManager::new().await.expect("Failed to initalize config manager");
-    CONFIG.set(RwLock::new(cfg)).unwrap();
+    match ConfigManager::new().await {
+      Ok(cfg) => {
+        CONFIG.set(RwLock::new(cfg)).unwrap();
+      }
+      Err(e) => {
+        error!("Failed to initialize config manager: {}", e);
+        exit(1);
+      }
+    }
   }
 
   pub fn get_config_dir(&self) -> &PathBuf {
     &self.config_path
   }
 
-  fn create_default_config(path: &PathBuf) -> std::io::Result<()> {
+  fn create_default_config(path: &Path) -> Result<(), ConfigError> {
     let config = Config::default();
 
-    let file = OpenOptions::new()
-      .write(true)
-      .truncate(true)
-      .create(true)
-      .open(path)
-      .expect(&format!("Failed to open config file: {:?}", path));
+    let file = OpenOptions::new().write(true).truncate(true).create(true).open(path)?;
+
     file.lock_exclusive()?;
-    serde_yml::to_writer(&file, &config).unwrap();
-    fs2::FileExt::unlock(&file)?;
+    serde_yml::to_writer(&file, &config)?;
+    file.unlock()?;
 
     Ok(())
   }
 
-  async fn load_config(path: PathBuf) -> Result<Config, Box<dyn Error + Send>> {
+  async fn load_config(path: PathBuf) -> Result<Config, ConfigError> {
     tokio::task::spawn_blocking(move || {
-      // If no config file exists, create one with defaults
       if !path.exists() {
         let default = Config::default();
-        let f = OpenOptions::new().write(true).truncate(true).create(true).open(&path).unwrap();
-        serde_yml::to_writer(&f, &default).unwrap();
+        let f = OpenOptions::new().write(true).truncate(true).create(true).open(&path)?;
+        serde_yml::to_writer(&f, &default)?;
         return Ok(default);
       }
 
-      let file = File::open(&path).unwrap();
-      file.lock_exclusive().unwrap();
+      let file = File::open(&path)?;
+      file.lock_exclusive()?;
 
-      let mut config: Config = serde_yml::from_reader(&file).unwrap();
+      let mut config: Config = serde_yml::from_reader(&file)?;
 
-      file.unlock().unwrap();
+      file.unlock()?;
 
-      let serialized = serde_yml::to_string(&config).unwrap();
-      config = serde_yml::from_str(&serialized).unwrap();
+      // Re-serialize to normalize formatting
+      let serialized = serde_yml::to_string(&config)?;
+      config = serde_yml::from_str(&serialized)?;
 
-      let f = OpenOptions::new().write(true).truncate(true).create(true).open(&path).unwrap();
-      serde_yml::to_writer(&f, &config).unwrap();
+      let f = OpenOptions::new().write(true).truncate(true).create(true).open(&path)?;
+      serde_yml::to_writer(&f, &config)?;
 
       Ok(config)
     })
     .await
-    .unwrap()
+    .map_err(|e| ConfigError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
   }
 
-  pub async fn save_config(&self) -> std::io::Result<()> {
-    let config_path = self.config_path.clone().join("config.yml");
+  pub async fn save_config(&self) -> Result<(), ConfigError> {
+    let config_path = self.config_path.join("config.yml");
     let config = self.config.clone();
 
     debug!("Saving config file");
 
     tokio::task::spawn_blocking(move || {
-      match OpenOptions::new().write(true).truncate(true).create(true).open(&config_path) {
-        Ok(file) => {
-          if let Err(e) = file.lock_exclusive() {
-            error!("Failed to lock config file: {}", e);
-            return;
-          }
-
-          if let Err(e) = serde_yml::to_writer(&file, &config) {
-            error!("Failed to write config: {}", e);
-          }
-
-          if let Err(e) = fs2::FileExt::unlock(&file) {
-            error!("Failed to unlock config file: {}", e);
-          }
-        }
-        Err(e) => {
-          error!("Failed to open config for saving: {}", e);
-        }
-      }
+      let file = OpenOptions::new().write(true).truncate(true).create(true).open(&config_path)?;
+      file.lock_exclusive()?;
+      serde_yml::to_writer(&file, &config)?;
+      file.unlock()?;
+      Ok::<(), ConfigError>(())
     })
     .await
-    .unwrap();
+    .map_err(|e| ConfigError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))??;
 
     Ok(())
   }

@@ -46,11 +46,6 @@ impl Daemon {
           res = read_half.read_u16() => {
             match res {
               Ok(len) => {
-                if len > u16::MAX {
-                  error!("Packet is to big: {}", len);
-                  continue;
-                }
-
                 trace!("Received packet with len {}", len);
 
                 let mut raw: Vec<u8> = vec![0u8; len.into()];

@@ -14,6 +14,7 @@ use log::{debug, error, info, trace, warn};
 use multiconnect_config::CONFIG;
 use multiconnect_core::{Device, Packet};
 use protocols::{BehaviourEvent, PairingCodec};
+use thiserror::Error;
 use tokio::{
   fs::File,
   io::{AsyncReadExt, AsyncWriteExt},
@@ -24,6 +25,12 @@ use tracing_subscriber::EnvFilter;
 use crate::networking::protocols::StreamProtocolBehavior;
 
 const COMMAND_BATCH_MAX: usize = 50;
+
+#[derive(Debug, Error)]
+pub enum NetworkManagerError {
+  #[error("I/O Error: {0}")]
+  Io(#[from] tokio::io::Error),
+}
 
 /// Has to be seperate because `ResponseChannel` is not `Clone`
 #[derive(Debug)]
@@ -105,14 +112,14 @@ pub struct NetworkManager {
 }
 
 impl NetworkManager {
-  pub async fn new() -> Self {
+  pub async fn new() -> Result<Self, NetworkManagerError> {
     let (send_command_tx, send_command_rx) = mpsc::channel::<NetworkCommand>(10_000);
     let (network_event_tx, network_event_rx) = broadcast::channel::<NetworkEvent>(10_000);
     let (pairing_protocol_event_tx, pairing_protocol_event_rx) = mpsc::channel::<PairingProtocolEvent>(100);
 
-    let keys = Self::get_keys().await.unwrap();
+    let keys = Self::get_keys().await?;
 
-    Self {
+    Ok(Self {
       send_command_tx,
       send_command_rx: Some(send_command_rx),
 
@@ -122,7 +129,7 @@ impl NetworkManager {
       pairing_protocol_event_tx,
       pairing_protocol_event_rx: Some(pairing_protocol_event_rx),
       keys,
-    }
+    })
   }
   pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
