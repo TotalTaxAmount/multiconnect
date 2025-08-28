@@ -9,12 +9,12 @@ use std::{
 };
 
 use async_trait::async_trait;
-use log::warn;
+use log::{debug, warn};
 use multiconnect_core::Packet;
 use tauri::{AppHandle, Wry};
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::daemon::SharedDaemon;
+use crate::daemon::{DaemonEvent, SharedDaemon};
 
 #[macro_export]
 macro_rules! with_manager_module {
@@ -40,42 +40,53 @@ macro_rules! with_ctx {
   }};
 }
 
+pub enum FrontendAction {
+  SendPacket { packet: Packet },
+  Reconnect,
+}
+
 pub struct FrontendCtx {
   app: AppHandle<Wry>,
-  packet_tx: mpsc::Sender<Packet>,
+  command_tx: mpsc::Sender<FrontendAction>,
 }
 
 impl FrontendCtx {
-  pub fn new(app: AppHandle<Wry>, packet_tx: mpsc::Sender<Packet>) -> Self {
-    Self { app, packet_tx }
+  pub fn new(app: AppHandle<Wry>, command_tx: mpsc::Sender<FrontendAction>) -> Self {
+    Self { app, command_tx }
   }
 
-  pub async fn send_packet(&self, packet: Packet) {
-    let _ = self.packet_tx.send(packet).await;
+  pub async fn do_action(&self, packet: FrontendAction) {
+    let _ = self.command_tx.send(packet).await;
   }
 }
 
 #[async_trait]
 pub trait FrontendModule: Send + Sync + Any {
   async fn init(&mut self, ctx: Arc<Mutex<FrontendCtx>>) -> Result<(), Box<dyn Error>>;
-  async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx) -> Result<(), Box<dyn Error>>;
+  async fn on_event(&mut self, event: DaemonEvent, ctx: &mut FrontendCtx) -> Result<(), Box<dyn Error>>;
 
   fn as_any_mut(&mut self) -> &mut dyn Any;
   fn as_any(&self) -> &dyn Any;
 }
 
 pub struct FrontendModuleManager {
+  daemon: SharedDaemon,
   modules: HashMap<TypeId, Arc<Mutex<dyn FrontendModule>>>,
   ctx: Arc<Mutex<FrontendCtx>>,
-  recv_packet_stream: broadcast::Receiver<Packet>,
+  // event_tx: mpsc::Sender<FrontendAction>,
+  command_rx: Option<mpsc::Receiver<FrontendAction>>,
 }
 
 impl FrontendModuleManager {
   pub fn new(daemon: SharedDaemon, app: AppHandle<Wry>) -> Self {
+    // let (event_tx, event_rx) = mpsc::channel(1000);
+    let (command_tx, command_rx) = mpsc::channel(1000);
     Self {
+      daemon,
       modules: HashMap::new(),
-      ctx: Arc::new(Mutex::new(FrontendCtx::new(app, daemon.sending_stream()))),
-      recv_packet_stream: daemon.packet_stream(),
+      ctx: Arc::new(Mutex::new(FrontendCtx::new(app, command_tx))),
+      // event_tx,
+      command_rx: Some(command_rx),
     }
   }
 
@@ -93,28 +104,42 @@ impl FrontendModuleManager {
     self.ctx.clone()
   }
 
-  pub async fn init(&self) {
+  pub async fn init(&mut self) {
     for module in self.modules.values() {
       if let Err(e) = module.lock().await.init(self.ctx.clone()).await {
         warn!("Error in module (init): {}", e);
       }
     }
 
+    let daemon = self.daemon.clone();
     let modules = self.modules.clone();
-    let mut ch = self.recv_packet_stream.resubscribe();
+    let mut ch = self.daemon.event_channel();
+    let command_channel = self.daemon.command_channel();
+    let mut command_rx = self.command_rx.take().unwrap();
     let ctx = self.ctx.clone();
 
     tokio::spawn(async move {
       loop {
         tokio::select! {
-          packet = ch.recv() => if let Ok(packet) = packet {
+          event = ch.recv() => if let Ok(event) = event {
             let mut ctx = ctx.lock().await;
             for module in modules.values() {
-              if let Err(e) = module.lock().await.on_packet(packet.clone(), &mut ctx).await {
-                warn!("Error in module (on_packet): {}", e);
+              if let Err(e) = module.lock().await.on_event(event.clone(), &mut ctx).await {
+                warn!("Error in module (on_event): {}", e);
               }
             }
           },
+          command = command_rx.recv() => if let Some(command) = command {
+            match command {
+                FrontendAction::SendPacket { packet } => {
+                  debug!("Sending packet");
+                  if let Err(e) = command_channel.send(crate::daemon::DaemonCommand::SendPacket { packet }).await {
+                    warn!("Channel error: {}", e);
+                  };
+                },
+                FrontendAction::Reconnect => { daemon.reconnect(); },
+            }
+          }
         }
       }
     });

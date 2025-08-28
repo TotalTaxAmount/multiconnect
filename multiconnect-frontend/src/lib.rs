@@ -80,7 +80,7 @@ async fn set_theme(theme: String) -> Result<(), ()> {
 #[tauri::command]
 async fn debug_cmd(manager: State<'_, FrontendModuleManager>, cmd: String) -> Result<(), ()> {
   with_ctx!(manager, |ctx| {
-    ctx.send_packet(Packet::D0Debug(D0Debug::new(cmd))).await;
+    ctx.do_action(modules::FrontendAction::SendPacket { packet: Packet::D0Debug(D0Debug::new(cmd)) }).await;
     Ok(())
   })
 }

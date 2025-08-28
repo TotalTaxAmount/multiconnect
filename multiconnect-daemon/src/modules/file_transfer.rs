@@ -460,7 +460,7 @@ impl MulticonnectModule for FileTransferModule {
 
 
                 // Open the file we want to send
-                let mut file = BufReader::with_capacity(CHUNK_SIZE * CHUNKS_PER_OPERATION,File::open(path).await?);
+                let mut file = BufReader::with_capacity(CHUNK_SIZE * CHUNKS_PER_OPERATION, File::open(path).await?);
 
                 let mut last_check = Instant::now();
                 // Create a buffer to write into
@@ -470,12 +470,14 @@ impl MulticonnectModule for FileTransferModule {
 
                 let mut to_send = Vec::with_capacity(CHUNKS_PER_OPERATION);
                 loop {
+                  debug!("Read");
                   // Read into the buffer
                   let n = file.read(&mut buf).await?;
                   if n == 0 {
                     debug!("Done reading file");
                     break;
                   }
+                  debug!("N: {n}");
 
                   let now = Instant::now();
                   let elapsed = now.duration_since(last_check);
@@ -484,13 +486,14 @@ impl MulticonnectModule for FileTransferModule {
 
                   let mut offset = 0;
                   while offset < n {
+                    debug!("Process");
                     let end = (offset + CHUNK_SIZE).min(n);
                     let chunk = &buf[offset..end];
                     offset = end;
 
                     if chunk.len() > allowance {
                       let wait_time = ((chunk.len() - allowance) as f64 / transfer.current_bps as f64 * 1000f64) as u64;
-                      trace!("Throttling transfer for {} seconds", wait_time);
+                      debug!("Throttling transfer for {} milli seconds", wait_time);
                       tokio::time::sleep(tokio::time::Duration::from_millis(wait_time)).await;
                       allowance = 0;
                     } else {
@@ -500,9 +503,11 @@ impl MulticonnectModule for FileTransferModule {
                     to_send.push(P5TransferChunk::new(trasnfer_uuid, chunk.to_vec()));
 
                     if to_send.len() >= CHUNKS_PER_OPERATION {
+                      debug!("Aq lock attemp");
                       let guard = ctx.lock().await;
+                      debug!("Done");
                       for chunk in to_send.drain(..) {
-                        trace!("Sending chunk with {} bytes", chunk.data.len());
+                        debug!("Sending chunk with {} bytes", chunk.data.len());
                         guard.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
                       }
                     }
@@ -564,6 +569,7 @@ impl MulticonnectModule for FileTransferModule {
 
                     // Write the data from the chunk packet to the file
                     if let Ok(len) = file.write(&chunk_packet.data).await {
+                      debug!("Data wrote");
                       // Update transfer progress
                       transfer.processed_len += len;
                       bytes_since_last_update += len;
@@ -572,6 +578,7 @@ impl MulticonnectModule for FileTransferModule {
                       let elapsed = now.duration_since(last_write_check);
 
                       if elapsed.as_secs_f64() > UPDATE_INTERVAL_SEC || transfer.processed_len == transfer.total_len {
+                        debug!("A");
                         let bps = (bytes_since_last_update as f64 / elapsed.as_secs_f64()) as u64;
                         trace!("Transfer speed: {} B/s", bps);
 
@@ -593,11 +600,13 @@ impl MulticonnectModule for FileTransferModule {
                           ))).await;
                         last_write_check = now;
                         bytes_since_last_update = 0; // Reset the bytes since last update
+                        debug!("B");
 
                       }
 
                       // Check if all data has been transfered
                       if transfer.processed_len == transfer.total_len {
+                        debug!("Processed the total len");
                         let guard = ctx.lock().await;
                         // Notify peer that the progress is complete
                         guard.send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.total_len as u64))).await;

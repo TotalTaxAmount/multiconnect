@@ -136,6 +136,7 @@ impl MulticonnectModule for PairingModule {
         }
       }
       NetworkEvent::ConnectionOpened(peer_id) => {
+        // debug!("Wow we got it here");
         self.previously_connected.push(peer_id);
       }
       _ => {}

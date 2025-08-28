@@ -8,7 +8,7 @@ use multiconnect_core::{local::transfer::L9TransferFile, Packet};
 use tauri::{Emitter, State};
 use tokio::sync::Mutex;
 
-use crate::with_ctx;
+use crate::{daemon::DaemonEvent, with_ctx};
 
 use super::{FrontendCtx, FrontendModule, FrontendModuleManager};
 
@@ -20,20 +20,22 @@ impl FrontendModule for FileTransferModule {
     Ok(())
   }
 
-  async fn on_packet(&mut self, packet: Packet, ctx: &mut FrontendCtx) -> Result<(), Box<dyn Error>> {
-    match packet {
-      Packet::L10TransferProgress(packet) => {
-        debug!("File transfer progress: {:?}", packet);
-        ctx.app.emit(
-          &format!("file_transfer/{}_progress", packet.direction().as_str_name().to_lowercase()),
-          (packet.uuid, packet.file_name, packet.total, packet.done),
-        )?;
+  async fn on_event(&mut self, event: DaemonEvent, ctx: &mut FrontendCtx) -> Result<(), Box<dyn Error>> {
+    if let DaemonEvent::PacketReceived { packet } = event {
+      match packet {
+        Packet::L10TransferProgress(packet) => {
+          debug!("File transfer progress: {:?}", packet);
+          ctx.app.emit(
+            &format!("file_transfer/{}_progress", packet.direction().as_str_name().to_lowercase()),
+            (packet.uuid, packet.file_name, packet.total, packet.done),
+          )?;
+        }
+        Packet::L11TransferStatus(packet) => {
+          debug!("File transfer status: {:?}", packet);
+          ctx.app.emit("file_transfer/status", (&packet.uuid, packet.status()))?;
+        }
+        _ => {}
       }
-      Packet::L11TransferStatus(packet) => {
-        debug!("File transfer status: {:?}", packet);
-        ctx.app.emit("file_transfer/status", (&packet.uuid, packet.status()))?;
-      }
-      _ => {}
     }
     Ok(())
   }
@@ -50,7 +52,11 @@ impl FrontendModule for FileTransferModule {
 #[tauri::command]
 pub async fn send_file(manager: State<'_, FrontendModuleManager>, peer: String, file_path: String) -> Result<(), ()> {
   with_ctx!(manager, |ctx| {
-    ctx.send_packet(Packet::L9TransferFile(L9TransferFile::new(PeerId::from_str(&peer).unwrap(), file_path))).await;
+    ctx
+      .do_action(crate::modules::FrontendAction::SendPacket {
+        packet: Packet::L9TransferFile(L9TransferFile::new(PeerId::from_str(&peer).unwrap(), file_path)),
+      })
+      .await;
     Ok(())
   })
 }

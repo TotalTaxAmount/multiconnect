@@ -1,6 +1,9 @@
 pub mod impls;
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+  error::Error,
+  time::{SystemTime, UNIX_EPOCH},
+};
 
 use generated::{
   multiconnect::{
@@ -16,6 +19,7 @@ use log::{debug, error, trace};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uid::IdU32;
 
 pub mod generated {
@@ -244,6 +248,99 @@ fn is_laptop() -> bool {
 
   let result: Vec<Win32_Battery> = wmi_con.query().unwrap_or_default();
   !result.is_empty()
+}
+
+// Setup logging and tracing
+pub fn init_tracing(log_level: &str, port: u16) -> Result<(), Box<dyn Error>> {
+  // Parse log level from args (same as your fern setup)
+  let log_level_filter = match log_level.to_lowercase().as_str() {
+    "trace" => "trace",
+    "debug" => "debug",
+    "info" => "info",
+    "warn" => "warn",
+    "error" => "error",
+    _ => "info",
+  };
+
+  // Create filter with module-specific overrides (same as your fern setup)
+  let filter = EnvFilter::new(format!("{},netlink_proto=off,netlink_packet_route=off", log_level_filter));
+
+  // Custom formatter that matches your fern output exactly
+  let fmt_layer = fmt::layer()
+    .with_writer(std::io::stdout)
+    .with_ansi(true)
+    .with_target(true)
+    .with_thread_ids(false)
+    .with_line_number(false)
+    .event_format(CustomFormatter::new());
+
+  let registry = tracing_subscriber::registry().with(fmt_layer).with(filter);
+
+  // Only add console subscriber for debug builds
+  #[cfg(debug_assertions)]
+  {
+    let console_layer = console_subscriber::ConsoleLayer::builder().server_addr(([127, 0, 0, 1], port + 1)).spawn();
+
+    registry.with(console_layer).init();
+  }
+
+  #[cfg(not(debug_assertions))]
+  {
+    registry.init();
+  }
+
+  Ok(())
+}
+
+// Custom formatter to exactly match your fern formatting
+struct CustomFormatter;
+
+impl CustomFormatter {
+  fn new() -> Self {
+    Self
+  }
+}
+
+impl<S, N> fmt::FormatEvent<S, N> for CustomFormatter
+where
+  S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+  N: for<'a> fmt::FormatFields<'a> + 'static,
+{
+  fn format_event(
+    &self,
+    ctx: &fmt::FmtContext<'_, S, N>,
+    mut writer: fmt::format::Writer<'_>,
+    event: &tracing::Event<'_>,
+  ) -> std::fmt::Result {
+    let metadata = event.metadata();
+    let level = metadata.level();
+
+    let level_color = match *level {
+      tracing::Level::ERROR => "\u{001b}[31m",
+      tracing::Level::WARN => "\u{001b}[33m",
+      tracing::Level::INFO => "\u{001b}[32m",
+      tracing::Level::DEBUG => "\u{001b}[34m",
+      tracing::Level::TRACE => "\u{001b}[35m",
+    };
+
+    let bold_start = "\u{001b}[1m";
+    let reset = "\u{001b}[0m";
+
+    write!(
+      writer,
+      "{} [{}{}{}] [{}{}{reset}] > ",
+      humantime::format_rfc3339(SystemTime::now()),
+      level_color,
+      level,
+      reset,
+      bold_start,
+      metadata.target(),
+    )?;
+
+    ctx.field_format().format_fields(writer.by_ref(), event)?;
+
+    writeln!(writer)
+  }
 }
 
 #[cfg(test)]
