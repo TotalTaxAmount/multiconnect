@@ -22,7 +22,7 @@ use tokio::{
 };
 use tracing_subscriber::EnvFilter;
 
-use crate::networking::protocols::StreamProtocolBehavior;
+use crate::networking::protocols::{StreamCloseReason, StreamProtocolBehavior};
 
 const COMMAND_BATCH_MAX: usize = 50;
 
@@ -50,8 +50,10 @@ pub enum NetworkEvent {
   PeerExpired(PeerId),
   /// A packet is recived from a peer
   PacketReceived(PeerId, Packet),
-  /// A connectio to a peer is closed
-  ConnectionClosed(PeerId),
+  /// A connection to a peer is closed
+  ConnectionClosed(PeerId, StreamCloseReason),
+  /// A conenction to a peer is opened
+  ConnectionOpened(PeerId),
 }
 
 /// Commands that can be sent to the swarm
@@ -87,8 +89,8 @@ impl MulticonnectBehavior {
     let stream_protocol = StreamProtocolBehavior::new();
 
     let mdns_config: mdns::Config = mdns::Config {
-      ttl: Duration::from_secs(4),
-      query_interval: std::time::Duration::from_secs(1),
+      ttl: Duration::from_millis(2000),
+      query_interval: Duration::from_micros(1800),
       ..Default::default()
     };
 
@@ -214,6 +216,16 @@ impl NetworkManager {
               trace!("Received multiconnect protocol event from {}", peer_id);
               if let Err(e) = network_event_tx.send(NetworkEvent::PacketReceived(peer_id, packet)) {
                 warn!("Error sending packet received event: {}", e);
+              }
+            }
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::StreamProtocol(BehaviourEvent::StreamOpend { peer_id })) => {
+              if let Err(e) = network_event_tx.send(NetworkEvent::ConnectionOpened(peer_id)) {
+                warn!("Channel error: {}", e);
+              }
+            }
+            SwarmEvent::Behaviour(MulticonnectBehaviorEvent::StreamProtocol(BehaviourEvent::StreamClosed { peer_id, reason })) => {
+              if let Err(e) = network_event_tx.send(NetworkEvent::ConnectionClosed(peer_id, reason)) {
+                warn!("Channel error: {}", e);
               }
             }
             _ => {

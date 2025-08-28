@@ -69,8 +69,10 @@ pub enum PairingError {
 pub struct PairingModule {
   /// Pending pair requests
   pending_requests: Arc<Mutex<HashMap<Uuid, (Instant, Packet, PeerId)>>>,
-  ///
+  /// All of the discovered devices
   discovered_devices: Arc<Mutex<HashMap<PeerId, Device>>>,
+  /// Previously conencted devices
+  previously_connected: Vec<PeerId>,
   /// Response channels for requests
   res_channels: Arc<Mutex<HashMap<PeerId, (Instant, ResponseChannel<Packet>)>>>,
   /// A channel for sending network commands
@@ -88,6 +90,7 @@ impl PairingModule {
       pending_requests: Arc::new(Mutex::new(HashMap::new())),
       pairing_protocol_recv: Some(pairing_protocol_recv),
       discovered_devices: Arc::new(Mutex::new(HashMap::new())),
+      previously_connected: Vec::new(),
       pairing_protocol_send,
       res_channels: Arc::new(Mutex::new(HashMap::new())),
     }
@@ -116,7 +119,9 @@ impl MulticonnectModule for PairingModule {
           *online = true;
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
 
-          if ctx.this_device.peer > peer_id {
+          if ctx.this_device.peer > peer_id
+            || (ctx.this_device.peer < peer_id && self.previously_connected.contains(&peer_id))
+          {
             ctx.open_stream(peer_id).await;
           }
         } else if ctx.this_device.peer > peer_id {
@@ -129,6 +134,9 @@ impl MulticonnectModule for PairingModule {
             ))
             .await;
         }
+      }
+      NetworkEvent::ConnectionOpened(peer_id) => {
+        self.previously_connected.push(peer_id);
       }
       _ => {}
     };
