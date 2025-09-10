@@ -19,7 +19,7 @@ use log::{debug, error, trace};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{fmt, layer::Layer, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uid::IdU32;
 
 pub mod generated {
@@ -252,41 +252,39 @@ fn is_laptop() -> bool {
 
 // Setup logging and tracing
 pub fn init_tracing(log_level: &str, port: u16) -> Result<(), Box<dyn Error>> {
-  // Parse log level from args (same as your fern setup)
-  let log_level_filter = match log_level.to_lowercase().as_str() {
-    "trace" => "trace",
-    "debug" => "debug",
-    "info" => "info",
-    "warn" => "warn",
-    "error" => "error",
-    _ => "info",
-  };
+  let log_filter = EnvFilter::new(format!(
+    "{},netlink_proto=off,netlink_packet_route=off,console_subscriber::aggregator=off,h2::codec=off",
+    log_level
+  ));
 
-  // Create filter with module-specific overrides (same as your fern setup)
-  let filter = EnvFilter::new(format!("{},netlink_proto=off,netlink_packet_route=off", log_level_filter));
-
-  // Custom formatter that matches your fern output exactly
   let fmt_layer = fmt::layer()
     .with_writer(std::io::stdout)
     .with_ansi(true)
     .with_target(true)
     .with_thread_ids(false)
     .with_line_number(false)
-    .event_format(CustomFormatter::new());
+    .event_format(CustomFormatter::new())
+    .with_filter(log_filter);
 
-  let registry = tracing_subscriber::registry().with(fmt_layer).with(filter);
-
-  // Only add console subscriber for debug builds
   #[cfg(debug_assertions)]
   {
-    let console_layer = console_subscriber::ConsoleLayer::builder().server_addr(([127, 0, 0, 1], port + 1)).spawn();
+    use log::info;
+    use std::net::Ipv4Addr;
 
-    registry.with(console_layer).init();
+    let (console_layer, server) =
+      console_subscriber::ConsoleLayer::builder().server_addr((Ipv4Addr::LOCALHOST, port)).build();
+
+    let console_filter = EnvFilter::new("tokio=trace,runtime=trace");
+
+    tracing_subscriber::registry().with(fmt_layer).with(console_layer.with_filter(console_filter)).init();
+
+    tokio::spawn(server.serve());
+    info!("Tokio console enabled on port {}", port);
   }
 
   #[cfg(not(debug_assertions))]
   {
-    registry.init();
+    tracing_subscriber::registry().with(fmt_layer).init();
   }
 
   Ok(())

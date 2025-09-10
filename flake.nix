@@ -63,7 +63,7 @@
 
           GSETTINGS_SCHEMA_DIR = "${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}/glib-2.0/schemas";
 
-          RUSTFLAGS = "--cfg tokio_unstable"; # TODO: Don't but this here
+          RUSTFLAGS = "--cfg tokio_unstable"; # TODO: Don't put this here
           WEBKIT_DISABLE_COMPOSITING_MODE = 1; # Fix `Failed to get GBM device`
 
           GDK_BACKEND = "x11"; # https://github.com/tauri-apps/tauri/issues/12361

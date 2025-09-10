@@ -13,6 +13,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
   multiconnect_core::init_tracing(&args.log_level, args.port + 1)?;
 
+  tokio::spawn(async {
+    loop {
+      tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+  });
+
   ConfigManager::init().await;
   let daemon = Daemon::new(args.port).await?;
   let mut network_manager = NetworkManager::new().await?;

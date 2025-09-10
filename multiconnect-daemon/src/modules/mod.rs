@@ -73,6 +73,10 @@ impl MulticonnectCtx {
     let _ = self.action_tx.send(Action::SendPeer(*target, packet)).await;
   }
 
+  pub fn get_action_tx(&self) -> mpsc::Sender<Action> {
+    self.action_tx.clone()
+  }
+
   pub async fn open_stream(&self, peer_id: PeerId) {
     let _ = self.action_tx.send(Action::OpenStream(peer_id)).await;
   }

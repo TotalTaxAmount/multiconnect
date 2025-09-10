@@ -398,8 +398,12 @@ impl MulticonnectModule for FileTransferModule {
             uuid = transfer_rx.recv() => if let Some(uuid) = uuid {
               let transfer = transfers.get(&uuid).unwrap(); // TODO: No unwrap
               debug!("Recivied transfer to send: {:?}", transfer);
+
+
+              debug!("Aq lock (trans send)");
+              let guard = ctx.lock().await;
               // Send one progress packet to the frontend
-              ctx.lock().await.send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
+              guard.send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
                 uuid,
                 transfer.file.clone(),
                 transfer.total_len as u64,
@@ -407,7 +411,7 @@ impl MulticonnectModule for FileTransferModule {
                 l10_transfer_progress::Direction::Outbound,
               ))).await;
               // Notify frontend that we are preparing the transfer
-              ctx.lock().await.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Preparing))).await;
+              guard.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Preparing))).await;
 
               // Now we get the hash when we wont block other things
               let hash = match Self::hash_blake3(&transfer.file).await {
@@ -415,21 +419,23 @@ impl MulticonnectModule for FileTransferModule {
                 Err(e) => {
                   warn!("Failed to hash file {}: {}", transfer.file, e);
                   // Notify frontend
-                  let guard = ctx.lock().await;
                   guard
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                       transfer.uuid,
                       l11_transfer_status::LtStatus::WrongSig,
                     )))
                     .await;
+                  drop(guard);
                   continue;
                 }
               };
 
               // Notify frontend that we are starting the transfer
-              ctx.lock().await.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Transfering))).await;
+              guard.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Transfering))).await;
 
               debug!("Starting transfer: {}, sig = {}", transfer.file, hash);
+              debug!("Dropped (trans send)");
+              drop(guard);
 
               // Create a uuid for this transfer
 
@@ -477,16 +483,15 @@ impl MulticonnectModule for FileTransferModule {
                     debug!("Done reading file");
                     break;
                   }
-                  debug!("N: {n}");
 
                   let now = Instant::now();
                   let elapsed = now.duration_since(last_check);
                   last_check = now;
                   allowance = (allowance + (elapsed.as_secs_f64() * transfer.current_bps as f64) as usize).min(transfer.current_bps);
 
+                  debug!("N: {}", n);
                   let mut offset = 0;
                   while offset < n {
-                    debug!("Process");
                     let end = (offset + CHUNK_SIZE).min(n);
                     let chunk = &buf[offset..end];
                     offset = end;
@@ -503,24 +508,30 @@ impl MulticonnectModule for FileTransferModule {
                     to_send.push(P5TransferChunk::new(trasnfer_uuid, chunk.to_vec()));
 
                     if to_send.len() >= CHUNKS_PER_OPERATION {
-                      debug!("Aq lock attemp");
-                      let guard = ctx.lock().await;
-                      debug!("Done");
+                      debug!("Start sends");
+                      let action_tx = {
+                        let guard = ctx.lock().await;
+                        guard.get_action_tx()
+                      };
                       for chunk in to_send.drain(..) {
                         debug!("Sending chunk with {} bytes", chunk.data.len());
-                        guard.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
+                        // ctx.lock().await.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
+                        let _ = action_tx.send(crate::modules::Action::SendPeer(transfer.peer, Packet::P5TransferChunk(chunk))).await;
                       }
+                       debug!("Done");
                     }
                   }
                 }
 
                 // Send any remaining chunks
+                debug!("Aq lock (remaing)");
                 let guard = ctx.lock().await;
                 debug!("Sending {} remaining chunks", to_send.len());
                 for chunk in to_send.drain(..) {
                   trace!("Sending chunk with {} bytes", chunk.data.len());
                   guard.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
                 }
+                debug!("Done (remaing)");
 
                 Ok(())
               }.await;
@@ -578,10 +589,10 @@ impl MulticonnectModule for FileTransferModule {
                       let elapsed = now.duration_since(last_write_check);
 
                       if elapsed.as_secs_f64() > UPDATE_INTERVAL_SEC || transfer.processed_len == transfer.total_len {
-                        debug!("A");
                         let bps = (bytes_since_last_update as f64 / elapsed.as_secs_f64()) as u64;
                         trace!("Transfer speed: {} B/s", bps);
 
+                        debug!("Aq lock (send ts)");
                         let guard = ctx.lock().await;
                         // Notify the peer about the transfer speed
                         guard
@@ -600,13 +611,14 @@ impl MulticonnectModule for FileTransferModule {
                           ))).await;
                         last_write_check = now;
                         bytes_since_last_update = 0; // Reset the bytes since last update
-                        debug!("B");
+                        debug!("Unlock (send ts)")
 
                       }
 
                       // Check if all data has been transfered
                       if transfer.processed_len == transfer.total_len {
                         debug!("Processed the total len");
+                        debug!("Aq lock (final)");
                         let guard = ctx.lock().await;
                         // Notify peer that the progress is complete
                         guard.send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.total_len as u64))).await;
@@ -626,7 +638,10 @@ impl MulticonnectModule for FileTransferModule {
 
                         // Get the real signature
                         transfer.file_handle.take().ok_or(FileTransferError::Other(format!("Failed to remove file handle for transfer {}", uuid).to_string()))?.flush().await.unwrap();
+                        drop(guard);
+                        debug!("Dropping and relocking");
                         let sig = Self::hash_blake3(path).await?;
+                        let guard = ctx.lock().await;
                         // Get the expected signature
                         let hash = transfer.hash.take().ok_or(FileTransferError::Other("Failed to get hash".to_string()))?;
 
@@ -669,6 +684,7 @@ impl MulticonnectModule for FileTransferModule {
                         drop(transfer);
                         transfers.remove(&uuid);
                       }
+                      debug!("Unlock (final 2)")
                     } else {
                       warn!("Failed to write file");
                     }
