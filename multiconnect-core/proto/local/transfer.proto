@@ -32,8 +32,9 @@ message L11TransferStatus {
     OK = 0;
     MALFORMED_PACKET = 1;
     WRONG_SIG = 2;
-    PREPARING = 3;
-    VALIDATING = 4;
-    TRANSFERING = 5;
+    WAITING = 3;
+    PREPARING = 4;
+    VALIDATING = 5;
+    TRANSFERING = 6;
   }
 }

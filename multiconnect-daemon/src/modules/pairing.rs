@@ -102,7 +102,7 @@ impl MulticonnectModule for PairingModule {
   #[doc = " Runs when the swarm receives a packet from another peer"]
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     match event {
-      NetworkEvent::PeerExpired(peer_id) => {
+      NetworkEvent::PeerExpired(peer_id) =>
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
           *online = false;
           ctx
@@ -110,9 +110,8 @@ impl MulticonnectModule for PairingModule {
             .await;
         } else {
           ctx.send_to_frontend(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await;
-        }
-      }
-      NetworkEvent::PeerDiscoverd(peer_id) => {
+        },
+      NetworkEvent::PeerDiscoverd(peer_id) =>
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
           *online = true;
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
@@ -131,8 +130,7 @@ impl MulticonnectModule for PairingModule {
               Packet::S1PeerMeta(S1PeerMeta::from_device(&ctx.this_device)),
             ))
             .await;
-        }
-      }
+        },
       NetworkEvent::ConnectionOpened(peer_id) => {
         // debug!("Wow we got it here");
         self.previously_connected.push(peer_id);

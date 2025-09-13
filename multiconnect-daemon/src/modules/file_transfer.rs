@@ -1,21 +1,16 @@
 use async_trait::async_trait;
 use blake3::Hasher;
 use dashmap::DashMap;
-use lazy_static::lazy_static;
-use libp2p::{
-  futures::{SinkExt, StreamExt},
-  PeerId,
-};
-use log::{debug, info, trace, warn};
+use libp2p::PeerId;
+use log::{debug, trace, warn};
 use multiconnect_config::CONFIG;
-use serde_json::error;
 use std::{
   error::Error,
-  fmt::format,
-  io,
+  f32::consts::E,
   path::{Path, PathBuf},
   str::FromStr,
-  sync::Arc,
+  sync::{atomic::AtomicUsize, Arc},
+  time::Duration,
   u16,
 };
 use thiserror::Error;
@@ -104,7 +99,7 @@ struct FileTransfer {
   /// File handle
   file_handle: Option<BufWriter<File>>,
   /// The current bytes per second we are sending or reciving
-  current_bps: usize,
+  current_bps: Arc<AtomicUsize>,
 }
 
 impl Clone for FileTransfer {
@@ -118,7 +113,7 @@ impl Clone for FileTransfer {
       hash: self.hash.clone(),
       direction: self.direction.clone(),
       file_handle: None, // File handle should not be cloned, it is only used for writing
-      current_bps: self.current_bps,
+      current_bps: self.current_bps.clone(),
     }
   }
 }
@@ -132,7 +127,7 @@ impl FileTransfer {
     hash: Option<String>,
     direction: TransferDirection,
     file_handle: Option<BufWriter<File>>,
-    current_bps: usize,
+    current_bps: Arc<AtomicUsize>,
   ) -> Self {
     Self { uuid, total_len: len, processed_len: 0, peer, file: file.into(), hash, direction, file_handle, current_bps }
   }
@@ -252,15 +247,17 @@ impl MulticonnectModule for FileTransferModule {
               Some(packet.signature),
               TransferDirection::Inbound,
               Some(file_handle),
-              CONFIG
-                .get()
-                .ok_or(FileTransferError::Other("Failed to get config".to_string()))?
-                .read()
-                .await
-                .get_config()
-                .modules
-                .transfer
-                .max_bps as usize,
+              Arc::new(AtomicUsize::new(
+                CONFIG
+                  .get()
+                  .ok_or(FileTransferError::Other("Failed to get config".to_string()))?
+                  .read()
+                  .await
+                  .get_config()
+                  .modules
+                  .transfer
+                  .max_bps as usize,
+              )),
             ),
           );
         }
@@ -322,9 +319,9 @@ impl MulticonnectModule for FileTransferModule {
         }
         Packet::P8TransferSpeed(packet) => {
           let uuid = Uuid::from_str(&packet.uuid)?;
-          if let Some(mut transfer) = self.transfers.get_mut(&uuid) {
-            transfer.current_bps = packet.speed_bps as usize;
-            trace!("Recivied transfer speed for {}: {} B/s", uuid, transfer.current_bps);
+          if let Some(transfer) = self.transfers.get_mut(&uuid) {
+            transfer.current_bps.store(packet.speed_bps as usize, std::sync::atomic::Ordering::Relaxed);
+            debug!("Recivied transfer speed for {}: {} B/s", uuid, packet.speed_bps);
           } else {
             return Err(Box::new(FileTransferError::UnknownTransfer(
               format!("Recivied transfer speed for unkown transfer {}", uuid).to_string(),
@@ -359,16 +356,20 @@ impl MulticonnectModule for FileTransferModule {
             None, /* Hash is none for now */
             TransferDirection::Outbound,
             None,
-            CONFIG
-              .get()
-              .ok_or(FileTransferError::Other("Failed to get config".to_string()))?
-              .read()
-              .await
-              .get_config()
-              .modules
-              .transfer
-              .max_bps as usize,
+            Arc::new(AtomicUsize::new(
+              CONFIG
+                .get()
+                .ok_or(FileTransferError::Other("Failed to get config".to_string()))?
+                .read()
+                .await
+                .get_config()
+                .modules
+                .transfer
+                .max_bps as usize,
+            )),
           );
+
+          ctx.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(uuid, LtStatus::Waiting))).await;
 
           self.transfers.insert(uuid, transfer.clone());
           self.transfer_tx.send(transfer).await?;
@@ -428,9 +429,8 @@ impl MulticonnectModule for FileTransferModule {
 
               // Notify frontend that we are starting the transfer
               guard.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Transfering))).await;
-
               debug!("Starting transfer: {}, sig = {}", transfer.file, hash);
-              debug!("Dropped (trans send)");
+              let action_tx = guard.get_action_tx();
               drop(guard);
 
               // Create a uuid for this transfer
@@ -446,8 +446,7 @@ impl MulticonnectModule for FileTransferModule {
                 debug!("Sending start packet");
 
                 // Send transfer start packet
-                ctx
-                  .lock()
+                ctx.lock()
                   .await
                   .send_to_peer(
                     &transfer.peer,
@@ -455,23 +454,25 @@ impl MulticonnectModule for FileTransferModule {
                       transfer.total_len as u64,
                       transfer.file.clone(),
                       transfer.uuid.to_string(),
-                      hash /* Now we have the hash */,
+                      hash,
                     )),
                   )
                   .await;
 
-
                 // Open the file we want to send
-                let mut file = BufReader::with_capacity(CHUNK_SIZE * CHUNKS_PER_OPERATION, File::open(path).await?);
+                let mut file = BufReader::with_capacity(
+                  CHUNK_SIZE * CHUNKS_PER_OPERATION,
+                  File::open(path).await?,
+                );
 
                 let mut last_check = Instant::now();
-                // Create a buffer to write into
-                let mut buf = vec![0u8; CHUNK_SIZE * CHUNKS_PER_OPERATION];
-                let mut allowance = transfer.current_bps;
+                let mut allowance: f64 = 0.0;
+                let mut last_bps = transfer.current_bps.load(std::sync::atomic::Ordering::Relaxed);
 
+                let mut buf = vec![0u8; CHUNK_SIZE * CHUNKS_PER_OPERATION];
                 let mut to_send = Vec::with_capacity(CHUNKS_PER_OPERATION);
+
                 loop {
-                  debug!("Read");
                   // Read into the buffer
                   let n = file.read(&mut buf).await?;
                   if n == 0 {
@@ -479,59 +480,81 @@ impl MulticonnectModule for FileTransferModule {
                     break;
                   }
 
-                  let now = Instant::now();
-                  let elapsed = now.duration_since(last_check);
-                  last_check = now;
-                  allowance = (allowance + (elapsed.as_secs_f64() * transfer.current_bps as f64) as usize).min(transfer.current_bps);
-
-                  debug!("N: {}", n);
                   let mut offset = 0;
                   while offset < n {
                     let end = (offset + CHUNK_SIZE).min(n);
                     let chunk = &buf[offset..end];
                     offset = end;
 
-                    if chunk.len() > allowance {
-                      let wait_time = ((chunk.len() - allowance) as f64 / transfer.current_bps as f64 * 1000f64) as u64;
-                      debug!("Throttling transfer for {} milli seconds", wait_time);
-                      tokio::time::sleep(tokio::time::Duration::from_millis(wait_time)).await;
-                      allowance = 0;
-                    } else {
-                      allowance -= chunk.len();
+                    // refill allowance based on elapsed time
+                    let now = Instant::now();
+                    let elapsed = now.duration_since(last_check);
+                    last_check = now;
+
+                    let new_bps = transfer.current_bps.load(std::sync::atomic::Ordering::Relaxed);
+
+                    if new_bps < last_bps {
+                      allowance = allowance.min(new_bps as f64)
+                    };
+                    last_bps = new_bps;
+                    let bps = new_bps as f64;
+
+                    allowance += elapsed.as_secs_f64() * bps;
+
+                    let need = chunk.len() as f64;
+                    while need > allowance {
+                      let missing = need - allowance;
+                      let mut wait_time = missing / bps;
+                      if wait_time > 1.0 {
+                        wait_time = 1.0;
+                      }
+
+                      debug!(
+                        "Throttling transfer for {:.6} seconds (chunk.len={} allowance={:.2} current_bps={})",
+                        wait_time,
+                        chunk.len(),
+                        allowance,
+                        transfer.current_bps.load(std::sync::atomic::Ordering::Relaxed)
+                      );
+
+                      tokio::time::sleep(Duration::from_secs_f64(wait_time)).await;
+
+                      // refill again after sleeping
+                      let now = Instant::now();
+                      let elapsed = now.duration_since(last_check);
+                      last_check = now;
+                      allowance += elapsed.as_secs_f64() * bps;
                     }
+
+                    // consume tokens
+                    allowance -= need;
 
                     to_send.push(P5TransferChunk::new(transfer.uuid, chunk.to_vec()));
 
                     if to_send.len() >= CHUNKS_PER_OPERATION {
-                      debug!("Start sends");
-                      let action_tx = {
-                        let guard = ctx.lock().await;
-                        guard.get_action_tx()
-                      };
                       for chunk in to_send.drain(..) {
-                        debug!("Sending chunk with {} bytes", chunk.data.len());
-                        // ctx.lock().await.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
-                        let _ = action_tx.send(crate::modules::Action::SendPeer(transfer.peer, Packet::P5TransferChunk(chunk))).await;
+                        let _ = action_tx
+                          .send(crate::modules::Action::SendPeer(
+                            transfer.peer,
+                            Packet::P5TransferChunk(chunk),
+                          ))
+                          .await;
                       }
-                       debug!("Done");
                     }
                   }
                 }
 
                 // Send any remaining chunks
-                debug!("Aq lock (remaing)");
                 let guard = ctx.lock().await;
                 debug!("Sending {} remaining chunks", to_send.len());
                 for chunk in to_send.drain(..) {
-                  trace!("Sending chunk with {} bytes", chunk.data.len());
-                  guard.send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk)).await;
+                  guard
+                    .send_to_peer(&transfer.peer, Packet::P5TransferChunk(chunk))
+                    .await;
                 }
-                debug!("Done (remaing)");
 
                 Ok(())
               }.await;
-
-
               if let Err(e) = result {
                 warn!("Failed to send file to peer {}: {}", &transfer.peer, e);
               }
@@ -539,9 +562,6 @@ impl MulticonnectModule for FileTransferModule {
             // Received a chunk for an incoming transfer
             _ = chunk_rx.recv_many(&mut chunk_buffer, CHUCK_BUFFER_LEN) => {
               let res: Result<(), FileTransferError> = async {
-                if chunk_buffer.len() > 1 {
-                  debug!("Processing {} chunks", chunk_buffer.len());
-                }
                 for chunk_packet in chunk_buffer.drain(..) {
                   // Get the uuid of the transfer from the packet
                   let uuid = Uuid::from_str(&chunk_packet.uuid)?;
@@ -573,21 +593,25 @@ impl MulticonnectModule for FileTransferModule {
 
                     let file = transfer.file_handle.as_mut().unwrap();
 
+                    let write_start_time = Instant::now();
+
                     // Write the data from the chunk packet to the file
                     if let Ok(len) = file.write(&chunk_packet.data).await {
-                      debug!("Data wrote");
                       // Update transfer progress
                       transfer.processed_len += len;
                       bytes_since_last_update += len;
 
                       let now = Instant::now();
+                      let write_time = now.duration_since(write_start_time);
                       let elapsed = now.duration_since(last_write_check);
 
-                      if elapsed.as_secs_f64() > UPDATE_INTERVAL_SEC || transfer.processed_len == transfer.total_len {
-                        let bps = (bytes_since_last_update as f64 / elapsed.as_secs_f64()) as u64;
-                        trace!("Transfer speed: {} B/s", bps);
+                      let instant_bps = len as f64 / write_time.as_secs_f64();
 
-                        debug!("Aq lock (send ts)");
+                      if elapsed.as_secs_f64() > UPDATE_INTERVAL_SEC || transfer.processed_len == transfer.total_len {
+                        let avg_bps = bytes_since_last_update as f64 / elapsed.as_secs_f64();
+                        let bps = (avg_bps * 0.9 + instant_bps * 0.1) as u64;
+                        debug!("Transfer speed: {} B/s", bps);
+
                         let guard = ctx.lock().await;
                         // Notify the peer about the transfer speed
                         guard
@@ -606,14 +630,12 @@ impl MulticonnectModule for FileTransferModule {
                           ))).await;
                         last_write_check = now;
                         bytes_since_last_update = 0; // Reset the bytes since last update
-                        debug!("Unlock (send ts)")
 
                       }
 
                       // Check if all data has been transfered
                       if transfer.processed_len == transfer.total_len {
                         debug!("Processed the total len");
-                        debug!("Aq lock (final)");
                         let guard = ctx.lock().await;
                         // Notify peer that the progress is complete
                         guard.send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.total_len as u64))).await;
@@ -679,7 +701,6 @@ impl MulticonnectModule for FileTransferModule {
                         drop(transfer);
                         transfers.remove(&uuid);
                       }
-                      debug!("Unlock (final 2)")
                     } else {
                       warn!("Failed to write file");
                     }

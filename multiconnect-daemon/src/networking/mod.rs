@@ -272,7 +272,7 @@ impl NetworkManager {
         debug!("Sending pairing protocol request to {}", peer_id);
         swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
       }
-      NetworkCommand::SendPairingProtocolResponse(channel, packet) => {
+      NetworkCommand::SendPairingProtocolResponse(channel, packet) =>
         if channel.is_open() {
           debug!("Sending pairing protocol response");
           if let Err(_packet) = swarm.behaviour_mut().pairing_protocol.send_response(channel, packet) {
@@ -280,8 +280,7 @@ impl NetworkManager {
           }
         } else {
           warn!("Cannot send response on closed channel");
-        }
-      }
+        },
       NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted) => {
         debug!("Updating whitelist for {}: {}", peer_id, is_whitelisted);
         if is_whitelisted {
