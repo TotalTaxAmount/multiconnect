@@ -117,7 +117,6 @@ impl Daemon {
                 res = command_rx.recv() => if let Some(res) = res {
                   match res {
                     DaemonCommand::SendPacket { packet } => {
-                      debug!("Sending packet 2");
                       let bytes = match Packet::to_bytes(&packet) {
                         Ok(b) => b,
                         Err(e) => {

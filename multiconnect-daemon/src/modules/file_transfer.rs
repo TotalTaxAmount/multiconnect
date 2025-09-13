@@ -397,7 +397,7 @@ impl MulticonnectModule for FileTransferModule {
             // We have a transfer to send
             uuid = transfer_rx.recv() => if let Some(uuid) = uuid {
               let transfer = transfers.get(&uuid).unwrap(); // TODO: No unwrap
-              debug!("Recivied transfer to send: {:?}", transfer);
+              debug!("Received transfer to send: {:?}", transfer);
 
 
               debug!("Aq lock (trans send)");
@@ -441,11 +441,11 @@ impl MulticonnectModule for FileTransferModule {
 
               // Get this size for a chunk, make sure to leave room for the reset of the transfer packet
               let ctx = ctx.clone();
-              let transfer_clone = transfer.clone();
+              let peer = transfer.peer.clone();
 
               // Do the acuall transfer
               let result: Result<(), FileTransferError> = async move {
-                let path = Path::new(&transfer_clone.file);
+                let path = Path::new(&transfer.file);
 
                 debug!("Sending start packet");
 
@@ -472,7 +472,6 @@ impl MulticonnectModule for FileTransferModule {
                 // Create a buffer to write into
                 let mut buf = vec![0u8; CHUNK_SIZE * CHUNKS_PER_OPERATION];
                 let mut allowance = transfer.current_bps;
-                let trasnfer_uuid = transfer.uuid.clone();
 
                 let mut to_send = Vec::with_capacity(CHUNKS_PER_OPERATION);
                 loop {
@@ -505,7 +504,7 @@ impl MulticonnectModule for FileTransferModule {
                       allowance -= chunk.len();
                     }
 
-                    to_send.push(P5TransferChunk::new(trasnfer_uuid, chunk.to_vec()));
+                    to_send.push(P5TransferChunk::new(uuid, chunk.to_vec()));
 
                     if to_send.len() >= CHUNKS_PER_OPERATION {
                       debug!("Start sends");
@@ -538,7 +537,7 @@ impl MulticonnectModule for FileTransferModule {
 
 
               if let Err(e) = result {
-                warn!("Failed to send file to peer {}: {}", &transfer_clone.peer, e);
+                warn!("Failed to send file to peer {}: {}", &peer, e);
               }
             },
             // Received a chunk for an incoming transfer

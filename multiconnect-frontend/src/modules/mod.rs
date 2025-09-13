@@ -132,7 +132,6 @@ impl FrontendModuleManager {
           command = command_rx.recv() => if let Some(command) = command {
             match command {
                 FrontendAction::SendPacket { packet } => {
-                  debug!("Sending packet");
                   if let Err(e) = command_channel.send(crate::daemon::DaemonCommand::SendPacket { packet }).await {
                     warn!("Channel error: {}", e);
                   };
