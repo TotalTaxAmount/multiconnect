@@ -101,7 +101,7 @@ impl MulticonnectCtx {
       }
     }
 
-    self.store.save().await.unwrap();
+    self.store.save().await;
   }
 
   /// Get the HashMap of paired devices

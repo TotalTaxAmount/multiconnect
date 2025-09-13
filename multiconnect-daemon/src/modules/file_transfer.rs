@@ -43,8 +43,8 @@ use super::{MulticonnectCtx, MulticonnectModule};
 
 pub struct FileTransferModule {
   transfers: Arc<DashMap<Uuid, FileTransfer>>,
-  transfer_tx: mpsc::Sender<Uuid>,
-  transfer_rx: Option<mpsc::Receiver<Uuid>>,
+  transfer_tx: mpsc::Sender<FileTransfer>,
+  transfer_rx: Option<mpsc::Receiver<FileTransfer>>,
   chunk_tx: mpsc::UnboundedSender<P5TransferChunk>,
   chunk_rx: Option<mpsc::UnboundedReceiver<P5TransferChunk>>,
 }
@@ -140,7 +140,7 @@ impl FileTransfer {
 
 impl FileTransferModule {
   pub async fn new() -> Self {
-    let (transfer_tx, transfer_rx) = mpsc::channel::<Uuid>(10);
+    let (transfer_tx, transfer_rx) = mpsc::channel::<FileTransfer>(10);
     let (chunk_tx, chunk_rx) = mpsc::unbounded_channel::<P5TransferChunk>();
 
     Self {
@@ -371,7 +371,7 @@ impl MulticonnectModule for FileTransferModule {
           );
 
           self.transfers.insert(uuid, transfer.clone());
-          self.transfer_tx.send(uuid).await?;
+          self.transfer_tx.send(transfer).await?;
         }
         _ => {}
       }
@@ -395,16 +395,12 @@ impl MulticonnectModule for FileTransferModule {
       loop {
         tokio::select! {
             // We have a transfer to send
-            uuid = transfer_rx.recv() => if let Some(uuid) = uuid {
-              let transfer = transfers.get(&uuid).unwrap(); // TODO: No unwrap
-              debug!("Received transfer to send: {:?}", transfer);
-
-
-              debug!("Aq lock (trans send)");
+            transfer = transfer_rx.recv() => if let Some(transfer) = transfer {
+              debug!("Recivied transfer to send: {:?}", transfer);
               let guard = ctx.lock().await;
               // Send one progress packet to the frontend
               guard.send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
-                uuid,
+                transfer.uuid,
                 transfer.file.clone(),
                 transfer.total_len as u64,
                 0, // We have not sent anything yet
@@ -441,7 +437,7 @@ impl MulticonnectModule for FileTransferModule {
 
               // Get this size for a chunk, make sure to leave room for the reset of the transfer packet
               let ctx = ctx.clone();
-              let peer = transfer.peer.clone();
+              // let transfer_clone = transfer.clone();
 
               // Do the acuall transfer
               let result: Result<(), FileTransferError> = async move {
@@ -504,7 +500,7 @@ impl MulticonnectModule for FileTransferModule {
                       allowance -= chunk.len();
                     }
 
-                    to_send.push(P5TransferChunk::new(uuid, chunk.to_vec()));
+                    to_send.push(P5TransferChunk::new(transfer.uuid, chunk.to_vec()));
 
                     if to_send.len() >= CHUNKS_PER_OPERATION {
                       debug!("Start sends");
@@ -537,7 +533,7 @@ impl MulticonnectModule for FileTransferModule {
 
 
               if let Err(e) = result {
-                warn!("Failed to send file to peer {}: {}", &peer, e);
+                warn!("Failed to send file to peer {}: {}", &transfer.peer, e);
               }
             },
             // Received a chunk for an incoming transfer
