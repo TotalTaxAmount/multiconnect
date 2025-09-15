@@ -49,6 +49,7 @@ const CHUNK_SIZE: usize = u16::MAX as usize - METADATA_SIZE;
 const CHUCK_BUFFER_LEN: usize = 100;
 const UPDATE_INTERVAL_SEC: f64 = 0.25;
 const CHUNKS_PER_OPERATION: usize = 40; // How many chunks to read/write at once
+const MAX_SEND_AHEAD_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Error, Debug)]
 pub enum FileTransferError {
@@ -533,6 +534,7 @@ impl MulticonnectModule for FileTransferModule {
 
                     if to_send.len() >= CHUNKS_PER_OPERATION {
                       for chunk in to_send.drain(..) {
+
                         let _ = action_tx
                           .send(crate::modules::Action::SendPeer(
                             transfer.peer,
@@ -593,8 +595,6 @@ impl MulticonnectModule for FileTransferModule {
 
                     let file = transfer.file_handle.as_mut().unwrap();
 
-                    let write_start_time = Instant::now();
-
                     // Write the data from the chunk packet to the file
                     if let Ok(len) = file.write(&chunk_packet.data).await {
                       // Update transfer progress
@@ -602,20 +602,21 @@ impl MulticonnectModule for FileTransferModule {
                       bytes_since_last_update += len;
 
                       let now = Instant::now();
-                      let write_time = now.duration_since(write_start_time);
                       let elapsed = now.duration_since(last_write_check);
 
-                      let instant_bps = len as f64 / write_time.as_secs_f64();
-
                       if elapsed.as_secs_f64() > UPDATE_INTERVAL_SEC || transfer.processed_len == transfer.total_len {
+                        let alpha = 0.2;
                         let avg_bps = bytes_since_last_update as f64 / elapsed.as_secs_f64();
-                        let bps = (avg_bps * 0.9 + instant_bps * 0.1) as u64;
-                        debug!("Transfer speed: {} B/s", bps);
+                        let last_bps = transfer.current_bps.load(std::sync::atomic::Ordering::Relaxed);
+
+                        let bps = ((1.0 - alpha) * last_bps as f64 + alpha * avg_bps) as usize;
+                        transfer.current_bps.store(bps, std::sync::atomic::Ordering::Relaxed);
+                        debug!("avg_bps={}, bps={}", avg_bps, bps);
 
                         let guard = ctx.lock().await;
                         // Notify the peer about the transfer speed
                         guard
-                          .send_to_peer(&transfer.peer, Packet::P8TransferSpeed(P8TransferSpeed::new(uuid, bps)))
+                          .send_to_peer(&transfer.peer, Packet::P8TransferSpeed(P8TransferSpeed::new(uuid, bps as u64)))
                           .await;
                         guard
                           .send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.processed_len as u64)))
@@ -656,7 +657,6 @@ impl MulticonnectModule for FileTransferModule {
                         // Get the real signature
                         transfer.file_handle.take().ok_or(FileTransferError::Other(format!("Failed to remove file handle for transfer {}", uuid).to_string()))?.flush().await.unwrap();
                         drop(guard);
-                        debug!("Dropping and relocking");
                         let sig = Self::hash_blake3(path).await?;
                         let guard = ctx.lock().await;
                         // Get the expected signature
