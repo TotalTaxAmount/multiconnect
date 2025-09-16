@@ -336,7 +336,7 @@ impl MulticonnectModule for FileTransferModule {
           let uuid = Uuid::from_str(&packet.uuid)?;
           if let Some(transfer) = self.transfers.get_mut(&uuid) {
             transfer.current_bps.store(packet.speed_bps as usize, std::sync::atomic::Ordering::Relaxed);
-            debug!("Recivied transfer speed for {}: {} B/s", uuid, packet.speed_bps);
+            // debug!("Recivied transfer speed for {}: {} B/s", uuid, packet.speed_bps);
           } else {
             return Err(Box::new(FileTransferError::UnknownTransfer(
               format!("Recivied transfer speed for unkown transfer {}", uuid).to_string(),
@@ -481,10 +481,6 @@ impl MulticonnectModule for FileTransferModule {
                   File::open(path).await?,
                 );
 
-                let mut last_check = Instant::now();
-                let mut allowance: f64 = 0.0;
-                let mut last_bps = transfer.current_bps.load(std::sync::atomic::Ordering::Relaxed);
-
                 let mut buf = vec![0u8; CHUNK_SIZE * CHUNKS_PER_OPERATION];
                 let mut to_send = Vec::with_capacity(CHUNKS_PER_OPERATION);
 
@@ -505,46 +501,7 @@ impl MulticonnectModule for FileTransferModule {
 
                     // refill allowance based on elapsed time
                     let now = Instant::now();
-                    let elapsed = now.duration_since(last_check);
-                    last_check = now;
 
-                    let new_bps = transfer.current_bps.load(std::sync::atomic::Ordering::Relaxed);
-
-                    if new_bps < last_bps {
-                      allowance = allowance.min(new_bps as f64)
-                    };
-                    last_bps = new_bps;
-                    let bps = new_bps as f64;
-
-                    allowance += elapsed.as_secs_f64() * bps;
-
-                    let need = chunk.len() as f64;
-                    while need > allowance {
-                      let missing = need - allowance;
-                      let mut wait_time = missing / bps;
-                      if wait_time > 1.0 {
-                        wait_time = 1.0;
-                      }
-
-                      trace!(
-                        "Throttling transfer for {:.6} seconds (chunk.len={} allowance={:.2} current_bps={})",
-                        wait_time,
-                        chunk.len(),
-                        allowance,
-                        transfer.current_bps.load(std::sync::atomic::Ordering::Relaxed)
-                      );
-
-                      tokio::time::sleep(Duration::from_secs_f64(wait_time)).await;
-
-                      // refill again after sleeping
-                      let now = Instant::now();
-                      let elapsed = now.duration_since(last_check);
-                      last_check = now;
-                      allowance += elapsed.as_secs_f64() * bps;
-                    }
-
-                    // consume tokens
-                    allowance -= need;
 
                     to_send.push(P5TransferChunk::new(transfer.uuid, chunk.to_vec()));
 
@@ -636,7 +593,7 @@ impl MulticonnectModule for FileTransferModule {
 
                         let bps = ((1.0 - alpha) * last_bps as f64 + alpha * avg_bps) as usize;
                         transfer.current_bps.store(bps, std::sync::atomic::Ordering::Relaxed);
-                        debug!("avg_bps={}, bps={}", avg_bps, bps);
+                        // debug!("avg_bps={}, bps={}", avg_bps, bps);
 
                         let guard = ctx.lock().await;
                         // Notify the peer about the transfer speed
