@@ -51,9 +51,9 @@ pub enum NetworkEvent {
   /// A packet is recived from a peer
   PacketReceived(PeerId, Packet),
   /// A connection to a peer is closed
-  ConnectionClosed(PeerId, StreamCloseReason),
+  StreamClosed(PeerId, StreamCloseReason),
   /// A conenction to a peer is opened
-  ConnectionOpened(PeerId),
+  StreamOpened(PeerId),
 }
 
 /// Commands that can be sent to the swarm
@@ -219,12 +219,12 @@ impl NetworkManager {
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::StreamProtocol(BehaviourEvent::StreamOpend { peer_id })) => {
-              if let Err(e) = network_event_tx.send(NetworkEvent::ConnectionOpened(peer_id)) {
+              if let Err(e) = network_event_tx.send(NetworkEvent::StreamOpened(peer_id)) {
                 warn!("Channel error: {}", e);
               }
             }
             SwarmEvent::Behaviour(MulticonnectBehaviorEvent::StreamProtocol(BehaviourEvent::StreamClosed { peer_id, reason })) => {
-              if let Err(e) = network_event_tx.send(NetworkEvent::ConnectionClosed(peer_id, reason)) {
+              if let Err(e) = network_event_tx.send(NetworkEvent::StreamClosed(peer_id, reason)) {
                 warn!("Channel error: {}", e);
               }
             }
@@ -272,7 +272,7 @@ impl NetworkManager {
         debug!("Sending pairing protocol request to {}", peer_id);
         swarm.behaviour_mut().pairing_protocol.send_request(&peer_id, packet);
       }
-      NetworkCommand::SendPairingProtocolResponse(channel, packet) =>
+      NetworkCommand::SendPairingProtocolResponse(channel, packet) => {
         if channel.is_open() {
           debug!("Sending pairing protocol response");
           if let Err(_packet) = swarm.behaviour_mut().pairing_protocol.send_response(channel, packet) {
@@ -280,7 +280,8 @@ impl NetworkManager {
           }
         } else {
           warn!("Cannot send response on closed channel");
-        },
+        }
+      }
       NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted) => {
         debug!("Updating whitelist for {}: {}", peer_id, is_whitelisted);
         if is_whitelisted {

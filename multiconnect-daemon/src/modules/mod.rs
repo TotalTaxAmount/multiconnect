@@ -7,7 +7,11 @@ use async_trait::async_trait;
 use libp2p::PeerId;
 use log::{debug, error, trace, warn};
 use multiconnect_core::{Device, Packet, SavedDevice};
-use std::{collections::HashMap, error::Error, sync::Arc};
+use std::{
+  collections::{HashMap, HashSet},
+  error::Error,
+  sync::Arc,
+};
 use store::Store;
 use tokio::sync::{mpsc, Mutex};
 
@@ -48,6 +52,8 @@ pub struct MulticonnectCtx {
   store: Store,
   /// A list of devices: Saved device,
   devices: HashMap<PeerId, (SavedDevice, bool, bool)>,
+  /// A list of peers with open streams
+  open_streams: HashSet<PeerId>,
 }
 
 impl MulticonnectCtx {
@@ -60,7 +66,7 @@ impl MulticonnectCtx {
     for (id, device) in saved_devices {
       map.insert(id.clone(), (device.clone(), false, false));
     }
-    Self { action_tx: send_packet_tx, this_device, store, devices: map }
+    Self { action_tx: send_packet_tx, this_device, store, devices: map, open_streams: HashSet::new() }
   }
 
   /// Send a packet to the frontend
@@ -101,7 +107,7 @@ impl MulticonnectCtx {
       }
     }
 
-    self.store.save().await;
+    self.store.save().await.unwrap();
   }
 
   /// Get the HashMap of paired devices
@@ -141,6 +147,18 @@ impl MulticonnectCtx {
 
   pub fn device_exists(&self, id: &PeerId) -> bool {
     self.devices.contains_key(id)
+  }
+
+  pub fn is_stream_open(&self, id: &PeerId) -> bool {
+    self.open_streams.contains(id)
+  }
+
+  pub fn remove_stream_open(&mut self, id: &PeerId) -> bool {
+    self.open_streams.remove(id)
+  }
+
+  pub fn add_stream_open(&mut self, id: &PeerId) {
+    self.open_streams.insert(*id);
   }
 
   /// Get the local peer id

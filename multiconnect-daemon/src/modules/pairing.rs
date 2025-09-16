@@ -102,7 +102,7 @@ impl MulticonnectModule for PairingModule {
   #[doc = " Runs when the swarm receives a packet from another peer"]
   async fn on_network_event(&mut self, event: NetworkEvent, ctx: &mut MulticonnectCtx) -> Result<(), Box<dyn Error>> {
     match event {
-      NetworkEvent::PeerExpired(peer_id) =>
+      NetworkEvent::PeerExpired(peer_id) => {
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
           *online = false;
           ctx
@@ -110,14 +110,16 @@ impl MulticonnectModule for PairingModule {
             .await;
         } else {
           ctx.send_to_frontend(Packet::L1PeerExpired(L1PeerExpired::new(&peer_id))).await;
-        },
-      NetworkEvent::PeerDiscoverd(peer_id) =>
+        }
+      }
+      NetworkEvent::PeerDiscoverd(peer_id) => {
         if let Some((_, online, _)) = ctx.get_device_mut(&peer_id) {
           *online = true;
           ctx.send_to_frontend(Packet::L8DeviceStatusUpdate(L8DeviceStatusUpdate::update_online(&peer_id, true))).await;
 
-          if ctx.this_device.peer > peer_id
-            || (ctx.this_device.peer < peer_id && self.previously_connected.contains(&peer_id))
+          if (ctx.this_device.peer > peer_id
+            || (ctx.this_device.peer < peer_id && self.previously_connected.contains(&peer_id)))
+            && !ctx.is_stream_open(&peer_id)
           {
             ctx.open_stream(peer_id).await;
           }
@@ -130,10 +132,15 @@ impl MulticonnectModule for PairingModule {
               Packet::S1PeerMeta(S1PeerMeta::from_device(&ctx.this_device)),
             ))
             .await;
-        },
-      NetworkEvent::ConnectionOpened(peer_id) => {
-        // debug!("Wow we got it here");
+        }
+      }
+      // TODO: Kinda jank to do this here but whatever
+      NetworkEvent::StreamOpened(peer_id) => {
+        ctx.add_stream_open(&peer_id);
         self.previously_connected.push(peer_id);
+      }
+      NetworkEvent::StreamClosed(peer_id, _) => {
+        ctx.remove_stream_open(&peer_id);
       }
       _ => {}
     };
@@ -322,8 +329,10 @@ impl MulticonnectModule for PairingModule {
                             guard.add_device(SavedDevice::new(device.clone(), true));
                             guard.save_store().await;
                             guard.update_whitelist(device.peer, true).await;
-                            guard.open_stream(device.peer).await;
-
+                            
+                            if !guard.is_stream_open(&device.peer) {
+                              guard.open_stream(device.peer).await;
+                            }
                           }
 
                           guard.send_to_frontend(Packet::L3PeerPairResponse(L3PeerPairResponse::new(packet.accepted, uuid))).await;
