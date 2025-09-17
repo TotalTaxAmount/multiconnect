@@ -26,7 +26,7 @@ use tokio::{
 use uuid::Uuid;
 
 use multiconnect_core::{
-  generated::{P4TransferStart, P5TransferChunk, P6TransferStatus, P7TransferAck, P8TransferSpeed},
+  generated::{p6_transfer_status::PtStatus, P4TransferStart, P5TransferChunk, P6TransferStatus},
   local::transfer::{
     l10_transfer_progress,
     l11_transfer_status::{self, LtStatus},
@@ -281,7 +281,7 @@ impl MulticonnectModule for FileTransferModule {
         }
         Packet::P6TransferStatus(packet) => match packet.status() {
           // A peer recivied a file successfully
-          multiconnect_core::generated::p6_transfer_status::PtStatus::Ok => {
+          PtStatus::Ok => {
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                 Uuid::from_str(&packet.uuid)?,
@@ -289,9 +289,29 @@ impl MulticonnectModule for FileTransferModule {
               )))
               .await;
           }
-          multiconnect_core::generated::p6_transfer_status::PtStatus::MalformedPacket => todo!(),
+          PtStatus::Transfering => {
+            let uuid = Uuid::from_str(&packet.uuid)?;
+            let transfer = self.transfers.get(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?;
+
+            transfer.processed_len.store(packet.progress as usize, Ordering::Relaxed);
+            transfer.current_bps.store(packet.speed_bps as usize, std::sync::atomic::Ordering::Relaxed);
+
+            trace!("Recivied ack for transfer {}: {} bytes processed", uuid, packet.progress);
+
+            // Notify the frontend about the progress
+            ctx
+              .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
+                transfer.uuid,
+                transfer.file.clone(),
+                transfer.total_len as u64,
+                packet.progress,
+                l10_transfer_progress::Direction::Outbound,
+              )))
+              .await;
+          }
+          PtStatus::MalformedPacket => todo!(),
           // Signatures did not match and the peer did not save the file
-          multiconnect_core::generated::p6_transfer_status::PtStatus::WrongSig => {
+          PtStatus::WrongSig => {
             // Notify the frontend about the failed transfer
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
@@ -300,7 +320,7 @@ impl MulticonnectModule for FileTransferModule {
               )))
               .await;
           }
-          multiconnect_core::generated::p6_transfer_status::PtStatus::Validating => {
+          PtStatus::Validating => {
             // Notify the frontend about the current status
             ctx
               .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
@@ -310,39 +330,6 @@ impl MulticonnectModule for FileTransferModule {
               .await;
           }
         },
-        Packet::P7TransferAck(packet) => {
-          // A peer has acknowledged a transfer chunk
-          let uuid = Uuid::from_str(&packet.uuid)?;
-          let transfer = self.transfers.get(&uuid).ok_or(format!("No active transfer for uuid = {}", uuid))?;
-
-          // Update the processed length of the transfer
-          transfer.processed_len.store(packet.progress as usize, Ordering::Relaxed);
-          let procssed_len = transfer.processed_len.load(Ordering::Relaxed);
-
-          trace!("Recivied ack for transfer {}: {} bytes processed", uuid, procssed_len);
-
-          // Notify the frontend about the progress
-          ctx
-            .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
-              transfer.uuid,
-              transfer.file.clone(),
-              transfer.total_len as u64,
-              procssed_len as u64,
-              l10_transfer_progress::Direction::Outbound,
-            )))
-            .await;
-        }
-        Packet::P8TransferSpeed(packet) => {
-          let uuid = Uuid::from_str(&packet.uuid)?;
-          if let Some(transfer) = self.transfers.get_mut(&uuid) {
-            transfer.current_bps.store(packet.speed_bps as usize, std::sync::atomic::Ordering::Relaxed);
-            // debug!("Recivied transfer speed for {}: {} B/s", uuid, packet.speed_bps);
-          } else {
-            return Err(Box::new(FileTransferError::UnknownTransfer(
-              format!("Recivied transfer speed for unkown transfer {}", uuid).to_string(),
-            )));
-          }
-        }
         _ => {}
       }
     }
@@ -598,13 +585,8 @@ impl MulticonnectModule for FileTransferModule {
                         // debug!("avg_bps={}, bps={}", avg_bps, bps);
 
                         let guard = ctx.lock().await;
-                        // Notify the peer about the transfer speed
-                        guard
-                          .send_to_peer(&transfer.peer, Packet::P8TransferSpeed(P8TransferSpeed::new(uuid, bps as u64)))
-                          .await;
-                        guard
-                          .send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, processed_len as u64)))
-                          .await;
+
+                        guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, PtStatus::Transfering, processed_len as u64, bps as u64))).await;
                         guard
                           .send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
                             transfer.uuid,
@@ -625,8 +607,7 @@ impl MulticonnectModule for FileTransferModule {
                         let guard = ctx.lock().await;
                         last_acked_len = 0;
                         // Notify peer that the progress is complete
-                        guard.send_to_peer(&transfer.peer, Packet::P7TransferAck(P7TransferAck::new(uuid, transfer.total_len as u64))).await;
-                        guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::Validating))).await;
+                        guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, PtStatus::Validating, transfer.total_len as u64, 0))).await;
 
                         // Notify frontend that the transfer is complete
                         guard.send_to_frontend(Packet::L10TransferProgress(L10TransferProgress::new(
@@ -667,7 +648,7 @@ impl MulticonnectModule for FileTransferModule {
                             )))
                             .await;
 
-                          guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::Ok))).await;
+                          guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, PtStatus::Ok, transfer.total_len as u64, 0))).await;
                         } else {
                           warn!("File signature doesnt match: {} != {}", sig, hash);
                           // Delete whatever was downloaded
@@ -681,7 +662,7 @@ impl MulticonnectModule for FileTransferModule {
                             )))
                             .await;
 
-                          guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, multiconnect_core::generated::p6_transfer_status::PtStatus::WrongSig))).await;
+                          guard.send_to_peer(&transfer.peer, Packet::P6TransferStatus(P6TransferStatus::new(uuid, PtStatus::WrongSig, transfer.total_len as u64, 0))).await;
                         }
                         drop(transfer);
                         transfers.remove(&uuid);

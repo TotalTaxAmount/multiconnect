@@ -17,27 +17,15 @@ message P6TransferStatus {
   required uint32 id = 1;
   required string uuid = 2;
   required PTStatus status = 3;
+  required uint64 progress = 4;
+  /// The file write speed in bytes per second
+  required uint64 speed_bps = 5;
 
   enum PTStatus {
     OK = 0;
     MALFORMED_PACKET = 1;
     WRONG_SIG = 2;
     VALIDATING = 4;
+    TRANSFERING = 5;
   }
-}
-
-message P7TransferAck {
-  required uint32 id = 1;
-  required string uuid = 2;
-  required uint64 progress = 3;
-}
-
-/// Tells the sender what speed to send data at
-message P8TransferSpeed {
-  /// The packet ID
-  required uint32 id = 1;
-  /// The UUID of the transfer
-  required string uuid = 2;
-  /// The file write speed in bytes per second
-  required uint64 speed_bps = 3;
 }

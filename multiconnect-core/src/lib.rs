@@ -175,8 +175,6 @@ gen_packet_handlers! {
   P4TransferStart => 4,
   P5TransferChunk => 5,
   P6TransferStatus => 6,
-  P7TransferAck => 7,
-  P8TransferSpeed => 8,
   L0PeerFound => 9,
   L1PeerExpired => 10,
   L2PeerPairRequest => 11,
