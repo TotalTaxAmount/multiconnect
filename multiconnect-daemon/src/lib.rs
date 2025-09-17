@@ -15,6 +15,8 @@ use tokio::{
 
 pub type SharedDaemon = Arc<Daemon>;
 
+const OUTGOING_BUFFER_SIZE: usize = 30;
+
 #[derive(Debug, Clone)]
 pub enum FrontendEvent {
   RecvPacket(Packet),
@@ -106,6 +108,8 @@ impl Daemon {
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
     let mut outgoing_lock = self.outgoing_rx.lock().await;
 
+    let mut outgoing_buf = Vec::with_capacity(OUTGOING_BUFFER_SIZE);
+
     loop {
       tokio::select! {
         res = read_half.read_u16() => {
@@ -148,20 +152,15 @@ impl Daemon {
           }
         }
 
-        res = outgoing_lock.recv() => {
-          match res {
-            Some(p) => {
-              let bytes = Packet::to_bytes(&p).unwrap();
-              trace!("Sending packet: {:?}", p);
-              trace!("Raw packet: {:?}", bytes);
-              if let Err(e) = write_half.write_all(&bytes).await {
-                error!("Write error: {}", e);
-              }
-
-              let _ = write_half.flush().await;
-            },
-            None => todo!(),
+        _ = outgoing_lock.recv_many(&mut outgoing_buf, OUTGOING_BUFFER_SIZE) => {
+          for packet in outgoing_buf.drain(..) {
+            let bytes = Packet::to_bytes(&packet).unwrap();
+            trace!("Raw packet: {:?}", bytes);
+            if let Err(e) = write_half.write_all(&bytes).await {
+              error!("Write error: {}", e);
+            }
           }
+          let _ = write_half.flush().await;
         }
 
         _ = shutdown_rx.changed() => {

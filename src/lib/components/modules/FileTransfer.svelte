@@ -20,20 +20,15 @@
 
   const transfers = writable<Map<string, Transfer>>(new Map());
 
-  function updateTransfer(
-    uuid: string,
-    direction: TransferDirection,
-    fileName: string,
-    partial: Partial<Transfer>,
-  ) {
+  function updateTransfer(uuid: string, partial: Partial<Transfer>) {
     transfers.update((map) => {
       const existing = map.get(uuid) ?? {
         uuid,
-        direction,
-        fileName,
+        direction: "inbound",
+        fileName: "",
         done: 0,
         total: 0,
-        status: "Pending",
+        status: "Waiting",
       };
       map.set(uuid, { ...existing, ...partial });
       return new Map(map); // force reactivity
@@ -72,7 +67,7 @@
           console.log(
             `File transfer progress for ${fileName} (${direction}): ${done}/${total} (uuid=${uuid})`,
           );
-          updateTransfer(uuid, direction, fileName, { done, total });
+          updateTransfer(uuid, { done, total, direction, fileName });
         },
       );
       unsubs.push(un);
@@ -88,6 +83,15 @@
             const existing = map.get(uuid);
             if (existing) {
               map.set(uuid, { ...existing, status });
+            } else {
+              map.set(uuid, {
+                uuid: uuid,
+                status: status,
+                direction: "outbound",
+                done: 0,
+                total: 0,
+                fileName: "",
+              });
             }
             return new Map(map);
           });

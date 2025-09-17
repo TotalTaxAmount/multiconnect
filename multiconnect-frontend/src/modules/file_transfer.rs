@@ -24,7 +24,6 @@ impl FrontendModule for FileTransferModule {
     if let DaemonEvent::PacketReceived { packet } = event {
       match packet {
         Packet::L10TransferProgress(packet) => {
-          debug!("File transfer progress: {:?}", packet);
           ctx.app.emit(
             &format!("file_transfer/{}_progress", packet.direction().as_str_name().to_lowercase()),
             (packet.uuid, packet.file_name, packet.total, packet.done),

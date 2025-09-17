@@ -71,7 +71,9 @@ impl MulticonnectCtx {
 
   /// Send a packet to the frontend
   pub async fn send_to_frontend(&self, packet: Packet) {
-    let _ = self.action_tx.send(Action::SendFrontend(packet)).await;
+    if let Err(e) = self.action_tx.send(Action::SendFrontend(packet)).await {
+      warn!("Error sending to frontend: {}", e);
+    };
   }
 
   /// Send a packet to a peer
@@ -222,8 +224,7 @@ impl ModuleManager {
     let mut action_rx = self.action_rx.take().unwrap();
     let mut modules = std::mem::take(&mut self.modules);
     tokio::spawn(async move {
-      // let mut  = ctx.lock().await;
-
+      let mut action_buf = Vec::with_capacity(30);
       loop {
         tokio::select! {
           event = recv_frontend_packet_rx.recv() => if let Ok(event) = event {
@@ -254,14 +255,16 @@ impl ModuleManager {
             }
           },
 
-          action = action_rx.recv() => if let Some(action) = action {
-            match action {
-                Action::SendFrontend(packet) => { let _ = send_frontend_packet_tx.send(packet.to_owned()).await; },
+          _ = action_rx.recv_many(&mut action_buf, 30) => {
+            for action in action_buf.drain(..) {
+              match action {
+                Action::SendFrontend(packet) => { let _ = send_frontend_packet_tx.send(packet).await; },
                 Action::SendPeer(peer_id, packet) =>{ let _ = send_network_command.send(NetworkCommand::SendPacket(peer_id, packet)).await; },
                 Action::OpenStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::OpenStream(peer_id)).await; },
                 Action::CloseStream(peer_id) => { let _ = send_network_command.send(NetworkCommand::CloseStream(peer_id)).await; },
                 Action::UpdateWhitelist(peer_id, is_whitelisted) => { let _ = send_network_command.send(NetworkCommand::UpdateWhitelist(peer_id, is_whitelisted)).await; }
-            };
+              };
+            }
           },
         }
       }

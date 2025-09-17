@@ -354,7 +354,7 @@ impl MulticonnectModule for FileTransferModule {
     if let FrontendEvent::RecvPacket(packet) = event {
       match packet {
         Packet::L9TransferFile(packet) => {
-          debug!("Received command to send file from fronted");
+          debug!("Received command to send file from frontend");
           // Get the size of the file we want to send
           let len = fs::metadata(&packet.file_path).await?.len() as usize;
           // Target peer address
@@ -426,24 +426,26 @@ impl MulticonnectModule for FileTransferModule {
               // Notify frontend that we are preparing the transfer
               guard.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Preparing))).await;
 
+              // Don't need to keep the lock while we are hashing the file
+              drop(guard);
               // Now we get the hash when we wont block other things
               let hash = match Self::hash_blake3(&transfer.file).await {
                 Ok(hash) => hash,
                 Err(e) => {
                   warn!("Failed to hash file {}: {}", transfer.file, e);
                   // Notify frontend
-                  guard
+                  ctx.lock().await
                     .send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(
                       transfer.uuid,
                       l11_transfer_status::LtStatus::WrongSig,
                     )))
                     .await;
-                  drop(guard);
                   continue;
                 }
               };
 
               // Notify frontend that we are starting the transfer
+              let guard = ctx.lock().await;
               guard.send_to_frontend(Packet::L11TransferStatus(L11TransferStatus::new(transfer.uuid, LtStatus::Transfering))).await;
               debug!("Starting transfer: {}, sig = {}", transfer.file, hash);
               let action_tx = guard.get_action_tx();
@@ -572,7 +574,7 @@ impl MulticonnectModule for FileTransferModule {
                       }
                     }
 
-                    let file = transfer.file_handle.as_mut().unwrap();
+                    let mut file = transfer.file_handle.take().ok_or(FileTransferError::Other(format!("Failed to remove file handle for transfer {}", uuid)))?;
 
                     // Write the data from the chunk packet to the file
                     if let Ok(len) = file.write(&chunk_packet.data).await {
@@ -618,6 +620,7 @@ impl MulticonnectModule for FileTransferModule {
 
                       // Check if all data has been transfered
                       if transfer.processed_len.load(Ordering::Relaxed) == transfer.total_len {
+                        file.flush().await?;
                         debug!("Processed the total len");
                         let guard = ctx.lock().await;
                         last_acked_len = 0;
@@ -638,7 +641,6 @@ impl MulticonnectModule for FileTransferModule {
                         debug!("Transfer complete, validating file");
 
                         // Get the real signature
-                        transfer.file_handle.take().ok_or(FileTransferError::Other(format!("Failed to remove file handle for transfer {}", uuid).to_string()))?.flush().await.unwrap();
                         drop(guard);
                         let sig = Self::hash_blake3(path).await?;
                         let guard = ctx.lock().await;
@@ -683,7 +685,10 @@ impl MulticonnectModule for FileTransferModule {
                         }
                         drop(transfer);
                         transfers.remove(&uuid);
+                      } else {
+                        transfer.file_handle = Some(file);
                       }
+
                     } else {
                       warn!("Failed to write file");
                     }
