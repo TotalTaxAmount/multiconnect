@@ -21,7 +21,7 @@
     "pino": "^9.9.0",
     "pino-pretty": "^13.1.1",
     "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.10"
+    "tailwindcss": "^4.1.13"
   },
   "devDependencies": {
     "@iconify-json/mdi": "^1.2.3",
