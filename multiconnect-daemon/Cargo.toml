@@ -43,7 +43,7 @@ fern = { version = "0.7.1", features = ["colored"] }
 humantime = "2.2.0"
 argh = "0.1.13"
 uid = "0.1.8"
-serde_json = "1.0.140"
+serde_json = "1.0.145"
 hex = "0.4.3"
 thiserror = "2.0.12"
 dashmap = "6.1.0"
